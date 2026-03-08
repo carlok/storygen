@@ -101,7 +101,7 @@ export function CanvasPreview({
     return () => obs.disconnect();
   }, [draw]);
 
-  function coordsFromEvent(e: MouseEvent | Touch): [number, number] {
+  function coordsFromEvent(e: { clientX: number; clientY: number }): [number, number] {
     const canvas = canvasRef.current!;
     const r = canvas.getBoundingClientRect();
     const s = videoWidth / canvas.offsetWidth;
