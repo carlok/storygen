@@ -6,7 +6,7 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstr
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from db.engine import Base
+from .engine import Base  # relative — works whether imported as db.models or web.db.models
 
 
 def _now() -> datetime:
