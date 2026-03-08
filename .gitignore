@@ -21,3 +21,10 @@ output/*
 **/__pycache__/
 *.pyc
 *.pyo
+
+# Node / frontend
+frontend/node_modules/
+coverage/
+
+# Vite build output (rebuilt by `frontend-build` service)
+web/static/assets/
