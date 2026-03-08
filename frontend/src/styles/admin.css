@@ -1,0 +1,203 @@
+/* Admin panel — layout, stats bar, table, badges, action buttons */
+
+/* ── Stats bar ───────────────────────────────────────────────────────────── */
+.stats-bar {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.stat-card {
+  flex: 1 1 140px;
+  background: var(--surface, #1e1e2e);
+  border: 1px solid var(--border, #313244);
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.stat-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted, #6c7086);
+}
+
+.stat-value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--text, #cdd6f4);
+  line-height: 1;
+}
+
+/* ── Admin table ─────────────────────────────────────────────────────────── */
+.admin-table-wrap {
+  overflow-x: auto;
+  border-radius: 10px;
+  border: 1px solid var(--border, #313244);
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.admin-table th,
+.admin-table td {
+  padding: 0.6rem 0.9rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border, #313244);
+  white-space: nowrap;
+}
+
+.admin-table th {
+  background: var(--surface, #1e1e2e);
+  color: var(--muted, #6c7086);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.admin-table tbody tr:hover {
+  background: rgba(99, 102, 241, 0.06);
+}
+
+.admin-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* ── User avatar ─────────────────────────────────────────────────────────── */
+.user-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.avatar-initials {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent, #6366f1);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.user-name {
+  font-weight: 500;
+  color: var(--text, #cdd6f4);
+}
+
+.user-email {
+  font-size: 0.75rem;
+  color: var(--muted, #6c7086);
+}
+
+/* ── Status / role badges ────────────────────────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.badge-active {
+  background: rgba(166, 227, 161, 0.15);
+  color: #a6e3a1;
+  border: 1px solid rgba(166, 227, 161, 0.3);
+}
+
+.badge-disabled {
+  background: rgba(243, 139, 168, 0.12);
+  color: #f38ba8;
+  border: 1px solid rgba(243, 139, 168, 0.25);
+}
+
+.badge-admin {
+  background: rgba(203, 166, 247, 0.15);
+  color: #cba6f7;
+  border: 1px solid rgba(203, 166, 247, 0.3);
+}
+
+/* ── Small action buttons ────────────────────────────────────────────────── */
+.actions-cell {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.btn-sm {
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: opacity 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+.btn-sm:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-sm-neutral {
+  background: var(--surface, #1e1e2e);
+  border-color: var(--border, #313244);
+  color: var(--text, #cdd6f4);
+}
+
+.btn-sm-neutral:hover:not(:disabled) {
+  background: var(--border, #313244);
+}
+
+.btn-sm-danger {
+  background: rgba(243, 139, 168, 0.1);
+  border-color: rgba(243, 139, 168, 0.3);
+  color: #f38ba8;
+}
+
+.btn-sm-danger:hover:not(:disabled) {
+  background: rgba(243, 139, 168, 0.2);
+}
+
+.btn-sm-accent {
+  background: rgba(99, 102, 241, 0.15);
+  border-color: rgba(99, 102, 241, 0.4);
+  color: #818cf8;
+}
+
+.btn-sm-accent:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.25);
+}
+
+/* ── Empty state ─────────────────────────────────────────────────────────── */
+.admin-empty {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--muted, #6c7086);
+  font-size: 0.9rem;
+}

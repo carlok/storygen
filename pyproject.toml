@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.backends.legacy:build"
+
+# ── pytest ────────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+asyncio_mode   = "auto"
+testpaths      = ["tests"]
+python_files   = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+# Fail fast on first error during collection
+addopts = [
+  "--tb=short",
+  "--strict-markers",
+]
+
+markers = [
+  "asyncio: mark test as async",
+]
+
+# ── Coverage ──────────────────────────────────────────────────────────────────
+[tool.coverage.run]
+source   = ["web"]
+branch   = true
+omit     = [
+  "web/static/*",
+  "web/db/engine.py",   # thin glue, tested indirectly
+  "alembic/*",
+]
+
+[tool.coverage.report]
+show_missing   = true
+skip_covered   = false
+fail_under     = 60          # raise threshold as coverage grows
+
+[tool.coverage.html]
+directory = "coverage/backend"

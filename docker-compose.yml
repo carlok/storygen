@@ -36,6 +36,64 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── Test database (ephemeral, no volume) ──────────────────────────────────────
+  db-test:
+    image: postgres:16-alpine
+    profiles: [test]
+    environment:
+      POSTGRES_DB: storygen_test
+      POSTGRES_USER: storygen
+      POSTGRES_PASSWORD: storygen_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U storygen"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Backend tests ─────────────────────────────────────────────────────────────
+  backend-test:
+    build: .
+    profiles: [test]
+    command: >
+      sh -c "
+        pip install pytest pytest-asyncio httpx pytest-cov --quiet &&
+        pytest tests/
+          --cov=web
+          --cov-report=term-missing
+          --cov-report=html:coverage/backend
+          -v
+      "
+    environment:
+      DATABASE_URL: postgresql+asyncpg://storygen:storygen_test@db-test/storygen_test
+      SECRET_KEY: test-secret-key-32chars-abcde-xyz0!
+      ADMIN_EMAIL: ""
+      RESEND_API_KEY: ""
+      RESEND_FROM: ""
+    volumes:
+      - .:/workspace
+      - ./web:/app
+      - ./src:/src
+      - ./assets:/assets
+      - ./output:/output
+    working_dir: /workspace
+    depends_on:
+      db-test:
+        condition: service_healthy
+
+  # ── Frontend tests ────────────────────────────────────────────────────────────
+  frontend-test:
+    image: node:20-alpine
+    profiles: [test]
+    command: >
+      sh -c "
+        cd /workspace/frontend &&
+        npm ci --prefer-offline &&
+        npm test -- --coverage --reporter=verbose
+      "
+    volumes:
+      - .:/workspace
+    working_dir: /workspace/frontend
+
 volumes:
   pgdata:
   storygen_storage:
