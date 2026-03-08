@@ -1,14 +1,23 @@
 services:
+
+  # ── CLI: run generate.py directly without the web UI ─────────────────────────
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backend-base
     profiles: [cli]
     volumes:
       - ./src:/app
       - ./assets:/assets
       - ./output:/output
 
+  # ── Web: FastAPI backend (personal + multi-user) ──────────────────────────────
   web:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backend-base
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"
@@ -21,6 +30,35 @@ services:
       - storygen_storage:/storage
     # depends_on: db  ← uncomment when running with --profile multi-user
 
+  # ── Frontend dev server (Vite HMR, proxies /api and /auth to web) ─────────────
+  #   podman compose --profile dev up frontend-dev
+  frontend-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      target: frontend-dev
+    profiles: [dev]
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app        # live source code → hot reload
+      - /app/node_modules      # anonymous: keep container's node_modules intact
+
+  # ── Build frontend once (output lands in web/static via vite outDir) ──────────
+  #   podman compose --profile build run --rm frontend-build
+  frontend-build:
+    image: node:20-alpine
+    profiles: [build]
+    command: >
+      sh -c "
+        cd /workspace/frontend &&
+        npm ci &&
+        npm run build
+      "
+    volumes:
+      - .:/workspace           # workspace root so ../web/static resolves correctly
+
+  # ── Production DB (multi-user mode) ──────────────────────────────────────────
   db:
     image: postgres:16-alpine
     profiles: [multi-user]
@@ -36,7 +74,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Test database (ephemeral, no volume) ──────────────────────────────────────
+  # ── Test DB (ephemeral — no named volume, dropped after test run) ─────────────
   db-test:
     image: postgres:16-alpine
     profiles: [test]
@@ -50,19 +88,13 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Backend tests ─────────────────────────────────────────────────────────────
+  # ── Backend tests (pytest + coverage, multi-user mode against db-test) ─────────
   backend-test:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backend-test
     profiles: [test]
-    command: >
-      sh -c "
-        pip install pytest pytest-asyncio httpx pytest-cov --quiet &&
-        pytest tests/
-          --cov=web
-          --cov-report=term-missing
-          --cov-report=html:coverage/backend
-          -v
-      "
     environment:
       DATABASE_URL: postgresql+asyncpg://storygen:storygen_test@db-test/storygen_test
       SECRET_KEY: test-secret-key-32chars-abcde-xyz0!
@@ -70,7 +102,7 @@ services:
       RESEND_API_KEY: ""
       RESEND_FROM: ""
     volumes:
-      - .:/workspace
+      - .:/workspace           # workspace root (pytest discovers tests/ and web/)
       - ./web:/app
       - ./src:/src
       - ./assets:/assets
@@ -80,19 +112,13 @@ services:
       db-test:
         condition: service_healthy
 
-  # ── Frontend tests ────────────────────────────────────────────────────────────
+  # ── Frontend tests (vitest + coverage, source baked into image) ───────────────
   frontend-test:
-    image: node:20-alpine
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      target: frontend-test
     profiles: [test]
-    command: >
-      sh -c "
-        cd /workspace/frontend &&
-        npm ci --prefer-offline &&
-        npm test -- --coverage --reporter=verbose
-      "
-    volumes:
-      - .:/workspace
-    working_dir: /workspace/frontend
 
 volumes:
   pgdata:

@@ -2,7 +2,7 @@
 
 > Compose short MP4 videos from static images with text overlays — entirely inside a container, no installs on the host.
 
-A personal (or multi-user) daily-video tool: load your photos, write captions in the browser, hit Generate, download or email the result. The container is a pure environment; all your files live on the host via volume mounts.
+A personal (or multi-user) daily-video tool: load your photos, write captions in the browser, hit Generate, download or email the result. All your files live on the host via volume mounts — the container is a pure, reproducible environment.
 
 ---
 
@@ -10,21 +10,22 @@ A personal (or multi-user) daily-video tool: load your photos, write captions in
 
 ```
 storygen/
-├── Dockerfile                   # python:3.11-slim + ffmpeg + fonts + pip libs
-├── docker-compose.yml           # profiles: cli · web · multi-user · test
+├── Dockerfile                   # backend: backend-base (prod) + backend-test stages
+├── Dockerfile.frontend          # frontend: frontend-deps + frontend-dev + frontend-test
+├── docker-compose.yml           # services for every profile (see table below)
 ├── pyproject.toml               # pytest config + coverage settings
-├── .env                         # secrets (not committed — see .env.example)
+├── .env                         # secrets — copy from .env.example, never commit
 ├── src/
 │   └── generate.py              # video pipeline (Pillow · pilmoji · moviepy)
 ├── web/
-│   ├── main.py                  # FastAPI backend (personal + multi-user modes)
+│   ├── main.py                  # FastAPI app (personal + multi-user modes)
 │   ├── auth.py                  # Google OAuth2 + signed session cookie
 │   ├── db/
 │   │   ├── engine.py            # async SQLAlchemy engine
 │   │   └── models.py            # User · Config · Job ORM models
 │   └── routers/
 │       ├── auth.py              # /auth/google · /auth/google/callback · /auth/logout
-│       └── admin.py             # /api/admin/* (users, stats)
+│       └── admin.py             # /api/admin/* (users, stats, patch, delete)
 ├── frontend/                    # React 18 + Vite + TypeScript
 │   ├── src/
 │   │   ├── api/                 # typed fetch client (auth · blocks · admin)
@@ -33,12 +34,11 @@ storygen/
 │   │   ├── features/            # BlockCard · CanvasPreview · AdminTable …
 │   │   ├── pages/               # LoginPage · HomePage · AdminPage
 │   │   └── styles/              # globals.css · admin.css
-│   └── vite.config.ts           # outDir → ../web/static (FastAPI serves build)
-├── alembic/                     # DB migrations
+│   └── vite.config.ts           # outDir → ../web/static (FastAPI serves the build)
+├── alembic/                     # async DB migrations
 ├── tests/                       # pytest backend test suite
 ├── assets/
-│   ├── config.json              # your timeline (not committed — see .example)
-│   ├── config.json.example
+│   ├── config.json              # your timeline — copy from config.json.example
 │   ├── images/                  # source photos
 │   └── music/                   # background audio
 └── output/                      # rendered MP4s land here
@@ -52,28 +52,32 @@ storygen/
 |------|---------|
 | [Podman](https://podman.io/getting-started/installation) | v4+ |
 | [podman-compose](https://github.com/containers/podman-compose) | latest |
-| Node.js *(frontend dev only)* | 20+ |
+| Node.js *(frontend dev only, on host)* | 20+ |
 
 ---
 
-## Modes
+## Docker services & profiles
 
-| Mode | Description | Command |
-|------|-------------|---------|
-| **Personal** | Single user, no login required | `podman compose up web` |
-| **Multi-user** | Google OAuth2, PostgreSQL, admin panel | `podman compose --profile multi-user up` |
-| **Test** | Run backend + frontend test suites | `podman compose --profile test up` |
-| **CLI** | Generate video without the web UI | `podman compose run --rm app` |
+| Profile | Service | What it does |
+|---------|---------|--------------|
+| *(default)* | `web` | FastAPI backend on port 8000 |
+| `cli` | `app` | One-shot video generation (no web UI) |
+| `dev` | `frontend-dev` | Vite HMR dev server on port 5173 |
+| `build` | `frontend-build` | Compiles React app → `web/static/` |
+| `multi-user` | `db` | Production PostgreSQL |
+| `test` | `db-test` | Ephemeral test PostgreSQL |
+| `test` | `backend-test` | pytest + coverage |
+| `test` | `frontend-test` | vitest + coverage |
 
 ---
 
-## First-time setup (personal mode)
+## First-time setup — personal mode
 
 ```bash
 # 1. Clone
 git clone https://github.com/carlok/storygen.git && cd storygen
 
-# 2. Build image
+# 2. Build the backend image
 podman compose build
 
 # 3. Configure secrets
@@ -82,7 +86,7 @@ cp .env.example .env
 
 # 4. Create your config
 cp assets/config.json.example assets/config.json
-# → edit assets/config.json: set image filenames, durations, captions
+# → edit config.json: image filenames, durations, captions
 
 # 5. Drop media in place
 cp ~/photos/*.jpg assets/images/
@@ -97,25 +101,174 @@ podman compose up web
 
 ## Multi-user setup
 
+### Step 1 — Generate a secret key
+
 ```bash
-# 1. Generate a strong secret key
 python -c "import secrets; print(secrets.token_hex(32))"
+```
 
-# 2. Configure .env
-SECRET_KEY=<output above>
+Copy the output — you will paste it into `SECRET_KEY` in your `.env`.
+
+---
+
+### Step 2 — Google OAuth2 setup
+
+> You need a Google account. The whole setup takes ~5 minutes.
+
+**2.1 — Create a project**
+
+Go to [console.cloud.google.com](https://console.cloud.google.com).
+Top-left dropdown → **New Project** → give it a name (e.g. `storygen`) → Create.
+
+**2.2 — Configure the OAuth consent screen**
+
+Left sidebar → *APIs & Services* → *OAuth consent screen*
+
+| Field | Value |
+|-------|-------|
+| User type | **External** (any Google account) or **Internal** (your Google Workspace org only) |
+| App name | `Storygen` (or anything) |
+| User support email | your email |
+| Developer contact email | your email |
+
+Click *Save and Continue* → on the Scopes step, click **Add or remove scopes**, tick **email**, **profile**, **openid** → Update → Save and Continue.
+
+On the *Test users* step (only required while the app is in **Testing** status): click **Add users** and add your own Google email. Save and Continue.
+
+**2.3 — Create OAuth 2.0 credentials**
+
+Left sidebar → *APIs & Services* → *Credentials* → **Create Credentials** → **OAuth 2.0 Client ID**
+
+| Field | Value |
+|-------|-------|
+| Application type | **Web application** |
+| Name | `Storygen web` |
+| Authorized JavaScript origins | `http://localhost:8000` |
+| Authorized redirect URIs | `http://localhost:8000/auth/google/callback` |
+
+> For production add your domain too, e.g. `https://storygen.example.com/auth/google/callback`.
+> The value here must match `OAUTH_REDIRECT_URI` in `.env` exactly.
+
+Click **Create**. A dialog shows your **Client ID** (ends in `.apps.googleusercontent.com`) and **Client Secret** (starts with `GOCSPX-`). Copy both.
+
+---
+
+### Step 3 — Configure `.env`
+
+```bash
+cp .env.example .env
+```
+
+Uncomment and fill in the multi-user block:
+
+```dotenv
+SECRET_KEY=<output of step 1>
+
+GOOGLE_CLIENT_ID=xxxxxxxxxxxx.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-xxxxxxxxxxxx
+
+# Must match exactly what you entered in Google Cloud Console.
+# Default already works for local dev — only change for production.
+# OAUTH_REDIRECT_URI=http://localhost:8000/auth/google/callback
+
 DATABASE_URL=postgresql+asyncpg://storygen:yourpassword@db/storygen
-GOOGLE_CLIENT_ID=<from Google Cloud Console>
-GOOGLE_CLIENT_SECRET=<from Google Cloud Console>
-ADMIN_EMAIL=you@yourdomain.com   # promoted to admin on first login
+POSTGRES_PASSWORD=yourpassword
 
-# 3. Start with the multi-user profile
-podman compose --profile multi-user up
+# This account is promoted to admin automatically on first login.
+ADMIN_EMAIL=you@yourdomain.com
 
-# 4. Run DB migrations (first time)
+# Set to false when testing locally over plain HTTP.
+SECURE_COOKIES=false
+```
+
+---
+
+### Step 4 — Start and migrate
+
+```bash
+# Start backend + PostgreSQL
+podman compose --profile multi-user up web db -d
+
+# Run migrations (first time, or after schema changes)
 podman compose exec web alembic upgrade head
 ```
 
-The `ADMIN_EMAIL` user is automatically promoted to admin on startup — no manual SQL needed.
+Open **http://localhost:8000** → click **Sign in with Google** → the `ADMIN_EMAIL` account is promoted to admin automatically on first login.
+
+---
+
+### Admin panel
+
+Visit **http://localhost:8000/admin** (admin accounts only) to:
+
+- View all users, their status, and job count
+- Enable / disable accounts
+- Grant or revoke admin rights (cannot self-demote)
+- Delete accounts (cannot self-delete)
+- See aggregate stats (total users, jobs, disk usage)
+
+---
+
+## Frontend development
+
+```bash
+# Option A: native (fastest, requires Node 20 on host)
+cd frontend
+npm install
+npm run dev      # Vite at :5173, proxies /api and /auth to :8000
+
+# Option B: containerised (no Node.js needed on host)
+podman compose build frontend-dev
+podman compose --profile dev up frontend-dev
+# Vite HMR at http://localhost:5173
+# Source is volume-mounted — edits reload instantly, node_modules stay in the container
+```
+
+Build the production bundle (writes to `web/static/`):
+
+```bash
+# native
+cd frontend && npm run build
+
+# containerised
+podman compose --profile build run --rm frontend-build
+```
+
+FastAPI's `StaticFiles(html=True)` mount serves the built React app automatically — no extra config needed.
+
+---
+
+## Running tests
+
+### Backend
+
+```bash
+# native
+pip install pytest pytest-asyncio httpx pytest-cov
+pytest --cov=web --cov-report=term-missing
+
+# containerised (multi-user mode against ephemeral PostgreSQL)
+podman compose --profile test up backend-test db-test --abort-on-container-exit
+```
+
+### Frontend
+
+```bash
+# native
+cd frontend && npm test -- --coverage
+
+# containerised (source baked into image for deterministic CI)
+podman compose --profile test up frontend-test --abort-on-container-exit
+```
+
+### Both at once
+
+```bash
+podman compose --profile test up --abort-on-container-exit
+# Coverage reports:
+#   coverage/backend/   (HTML — pytest-cov)
+#   coverage/frontend/  (HTML — @vitest/coverage-v8)
+```
 
 ---
 
@@ -145,83 +298,31 @@ The `ADMIN_EMAIL` user is automatically promoted to admin on startup — no manu
 | `align_center` | bool | Center-align text lines within the pill |
 | `center_x` | bool | Horizontally centre the entire pill on the frame |
 
-Music shorter than the total video duration is looped automatically.
+Music shorter than total video duration is looped automatically.
 
 ---
 
-## Web UI
-
-```bash
-podman compose up web        # personal mode
-# or
-podman compose --profile multi-user up   # multi-user mode
-```
-
-Open **http://localhost:8000**.
-
-### Features
+## Web UI features
 
 - **Tab per block** — switch between scenes without scrolling
 - **Live canvas preview** — see the text pill on the actual image; drag to reposition
-- **X / Y sliders** — fine-tune position numerically (range = full frame resolution)
+- **X / Y sliders** — fine-tune position numerically
 - **Toggles** per block: Align center · Center X · B&W · Fade in · Fade out
-- **Generate Video** — modal spinner blocks UI while rendering (~10–60 s)
+- **Generate Video** — modal spinner while rendering (~10–60 s)
 - **Download Video** — direct link to the rendered MP4
-- **Send Video** — email the MP4 via [Resend](https://resend.com)
-- **Admin panel** *(multi-user only)* — `/admin`: user list, enable/disable, grant/revoke admin, usage stats
-
-Changes are written back to `config.json` on each generate.
-
----
-
-## Frontend development
-
-```bash
-cd frontend
-npm install
-npm run dev      # Vite dev server at :5173, proxies /api and /auth to :8000
-npm test         # vitest + @testing-library with coverage
-npm run build    # compiles into ../web/static — FastAPI serves it
-```
-
----
-
-## Running tests
-
-### Backend
-
-```bash
-pip install pytest pytest-asyncio httpx pytest-cov
-pytest --cov=web --cov-report=term-missing
-```
-
-### Frontend
-
-```bash
-cd frontend && npm test -- --coverage
-```
-
-### Both in Docker
-
-```bash
-podman compose --profile test up --abort-on-container-exit
-# Coverage reports: coverage/backend/  and  coverage/frontend/
-```
+- **Send Video** — email the MP4 via Resend
+- **Admin panel** *(multi-user only)* — user management and usage stats at `/admin`
 
 ---
 
 ## Email setup (Resend)
 
 1. Create a free account at [resend.com](https://resend.com)
-2. Add and verify your sending domain
+2. Add and verify your sending domain (or use `onboarding@resend.dev` for testing)
 3. Generate an API key
-4. Set in `.env`:
-   ```
-   RESEND_API_KEY=re_xxxxxxxxxxxx
-   RESEND_FROM=noreply@yourdomain.com
-   ```
+4. Set `RESEND_API_KEY` and `RESEND_FROM` in `.env`
 
-> **Note:** email attachment size limits apply (~10 MB). For longer videos use the Download link instead.
+> Attachment size limits apply (~10 MB). Use the Download link for longer videos.
 
 ---
 
@@ -230,8 +331,8 @@ podman compose --profile test up --abort-on-container-exit
 1. `podman compose up web`
 2. Open **http://localhost:8000**
 3. Edit captions in each block tab
-4. Drag text on the canvas preview to position
-5. Click **Generate Video** and wait for the modal to clear
+4. Drag text on the canvas preview to reposition
+5. Click **Generate Video** — wait for the modal to clear
 6. Click **Download Video** — or enter an email and click **Send Video**
 
 ---
@@ -240,7 +341,7 @@ podman compose --profile test up --abort-on-container-exit
 
 | Layer | Technology |
 |-------|-----------|
-| Container | Podman / Docker, python:3.11-slim |
+| Container | Podman / Docker, python:3.11-slim, node:20-alpine |
 | Video pipeline | moviepy 1.0.3, Pillow, pilmoji |
 | Fonts | DejaVu Sans Bold, Noto Color Emoji |
 | Backend | FastAPI + uvicorn |

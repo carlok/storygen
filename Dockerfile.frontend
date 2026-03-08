@@ -1,0 +1,51 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# Stage: frontend-deps
+#   Installs npm dependencies only.  Shared base for all frontend stages.
+# ══════════════════════════════════════════════════════════════════════════════
+FROM node:20-alpine AS frontend-deps
+
+WORKDIR /app
+
+# Copy only the manifest files first so Docker can cache this layer
+# independently of source-code changes.
+COPY frontend/package*.json ./
+RUN npm ci
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Stage: frontend-dev
+#   Vite development server with HMR (hot module replacement).
+#
+#   Source code is NOT copied here — it is volume-mounted at runtime by
+#   docker-compose so changes are reflected immediately without rebuilding.
+#   node_modules lives in an anonymous volume to prevent the host mount from
+#   overwriting the container's installed packages.
+#
+#   docker-compose volumes:
+#     - ./frontend:/app          ← live source code
+#     - /app/node_modules        ← anonymous: protects container node_modules
+#
+#   Used by the `frontend-dev` service (profiles: [dev]).
+# ══════════════════════════════════════════════════════════════════════════════
+FROM frontend-deps AS frontend-dev
+
+EXPOSE 5173
+
+# --host 0.0.0.0 makes Vite reachable from outside the container.
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Stage: frontend-test
+#   Copies source into the image for a fully self-contained, deterministic
+#   test run (no volume mounts needed).
+#
+#   --run exits after one pass instead of starting watch mode.
+#
+#   Used by the `frontend-test` service (profiles: [test]).
+# ══════════════════════════════════════════════════════════════════════════════
+FROM frontend-deps AS frontend-test
+
+COPY frontend/ .
+
+CMD ["npm", "test", "--", "--coverage", "--reporter=verbose", "--run"]
