@@ -278,5 +278,13 @@ if _multi_user:
             )
 
 
-# ── Static files (Vite build output / vanilla fallback) ──────────────────────
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+# ── Static files ─────────────────────────────────────────────────────────────
+# Serve Vite's hashed bundles under /assets (JS, CSS, images).
+app.mount("/assets", StaticFiles(directory="static/assets"), name="assets")
+
+# SPA catch-all: any path not matched by an API route above gets index.html
+# so React Router can handle client-side routes (/login, /admin, etc.).
+# Named API routes registered earlier always take precedence over this.
+@app.get("/{full_path:path}", include_in_schema=False)
+async def spa_fallback(full_path: str):  # noqa: ARG001
+    return FileResponse("static/index.html")
