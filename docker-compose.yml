@@ -18,3 +18,24 @@ services:
       - ./src:/src
       - ./assets:/assets
       - ./output:/output
+      - storygen_storage:/storage
+    # depends_on: db  ← uncomment when running with --profile multi-user
+
+  db:
+    image: postgres:16-alpine
+    profiles: [multi-user]
+    environment:
+      POSTGRES_DB: storygen
+      POSTGRES_USER: storygen
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-storygen}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U storygen"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+  storygen_storage:

@@ -4,20 +4,36 @@ import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Annotated, List, Optional
 
 import resend
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.middleware.sessions import SessionMiddleware
 
 CONFIG_PATH = Path("/assets/config.json")
 OUTPUT_DIR = Path("/output")
 GENERATE_SCRIPT = Path("/src/generate.py")
 
 app = FastAPI()
+
+# Session middleware — required for OAuth state param
+app.add_middleware(SessionMiddleware, secret_key=os.environ.get("SECRET_KEY", "change-me"))
+
+# ── Routers ──────────────────────────────────────────────────────────────────
+# Imported lazily so the personal-mode container (no DB) still starts up fine.
+_multi_user = bool(os.environ.get("DATABASE_URL"))
+
+if _multi_user:
+    from .routers.auth import router as auth_router
+    from .routers.admin import router as admin_router
+    from .auth import get_current_user
+    from .db.models import User
+    app.include_router(auth_router)
+    app.include_router(admin_router)
 
 
 def read_config() -> dict:
@@ -159,4 +175,41 @@ def send_email(req: EmailRequest):
     return {"status": "ok"}
 
 
+# ── Multi-user endpoints (only active when DATABASE_URL is set) ──────────────
+
+if _multi_user:
+    @app.get("/api/me")
+    async def me(user: Annotated["User", Depends(get_current_user)]):
+        return {
+            "id": str(user.id),
+            "email": user.email,
+            "display_name": user.display_name,
+            "avatar_url": user.avatar_url,
+            "is_admin": user.is_admin,
+            "is_active": user.is_active,
+        }
+
+    @app.get("/admin")
+    async def admin_page():
+        return FileResponse("static/admin.html")
+
+    @app.on_event("startup")
+    async def promote_initial_admin():
+        """Promote ADMIN_EMAIL to admin on first startup (no manual SQL needed)."""
+        admin_email = os.environ.get("ADMIN_EMAIL", "")
+        if not admin_email:
+            return
+        from sqlalchemy import select, update
+        from .db.engine import AsyncSessionLocal
+        from .db.models import User as UserModel
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                update(UserModel)
+                .where(UserModel.email == admin_email)
+                .values(is_admin=True)
+            )
+            await db.commit()
+
+
+# ── Static files (index.html, app.js, style.css, admin.html) ─────────────────
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
