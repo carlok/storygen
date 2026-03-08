@@ -246,12 +246,6 @@ if _multi_user:
             "is_active": user.is_active,
         }
 
-    # Fix #10 / MEDIUM: gate the admin HTML page behind require_admin so the
-    # UI structure is not disclosed to unauthenticated or non-admin users.
-    @app.get("/admin")
-    async def admin_page(_admin=Depends(require_admin)):
-        return FileResponse("static/admin.html")
-
     @app.on_event("startup")
     async def promote_initial_admin():
         """Promote ADMIN_EMAIL to admin on first startup (no manual SQL needed).
