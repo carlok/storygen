@@ -1,0 +1,23 @@
+# secrets
+.env
+
+# macOS metadata
+.DS_Store
+
+# real config — commit only the .example template
+assets/config.json
+
+# user media — keep placeholders, ignore actual files
+assets/images/*
+!assets/images/.gitkeep
+assets/music/*
+!assets/music/.gitkeep
+
+# generated videos — keep placeholder
+output/*
+!output/.gitkeep
+
+# Python
+**/__pycache__/
+*.pyc
+*.pyo

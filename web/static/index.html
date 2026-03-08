@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Story Video Generator</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/style.css">
+</head>
+
+<body>
+    <h1>Story Video Generator</h1>
+    <div id="container">
+        <div id="tabs"></div>
+        <div id="blocks"></div>
+        <div id="actions">
+            <div class="action-row">
+                <button id="generate-btn">Generate Video</button>
+                <span id="status"></span>
+                <a id="download-link" href="#" download>Download Video</a>
+            </div>
+            <div class="email-row">
+                <input type="email" id="email-to" placeholder="recipient@example.com" />
+                <button id="send-email-btn" disabled>Send Video</button>
+                <span id="email-status"></span>
+            </div>
+        </div>
+    </div>
+    <footer>&copy; 2026 <a href="https://carlo.perassi.com">carlok</a> &amp; <a href="https://claude.ai">Claude</a>
+    </footer>
+    <div id="modal" hidden>
+      <div class="modal-box">
+        <div class="modal-spinner"></div>
+        <p id="modal-msg"></p>
+      </div>
+    </div>
+    <script src="/app.js"></script>
+</body>
+
+</html>

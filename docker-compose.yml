@@ -1,0 +1,20 @@
+services:
+  app:
+    build: .
+    profiles: [cli]
+    volumes:
+      - ./src:/app
+      - ./assets:/assets
+      - ./output:/output
+
+  web:
+    build: .
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    env_file: .env
+    volumes:
+      - ./web:/app
+      - ./src:/src
+      - ./assets:/assets
+      - ./output:/output

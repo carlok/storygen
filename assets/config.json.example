@@ -1,0 +1,35 @@
+{
+  "output_prefix": "video",
+  "fps": 24,
+  "width": 1080,
+  "height": 1920,
+  "font_size": 48,
+  "font_color": [255, 255, 255],
+  "music": "music/soundtrack.mp3",
+  "blocks": [
+    {
+      "image": "photo1.jpg",
+      "start": 0,
+      "end": 5,
+      "text": "Scene caption here",
+      "bw": false,
+      "fade_in": true,
+      "fade_out": false,
+      "text_position": [100, 900],
+      "align_center": false,
+      "center_x": false
+    },
+    {
+      "image": "photo2.jpg",
+      "start": 5,
+      "end": 10,
+      "text": "Another caption\nwith a second line",
+      "bw": false,
+      "fade_in": false,
+      "fade_out": true,
+      "text_position": [100, 900],
+      "align_center": true,
+      "center_x": true
+    }
+  ]
+}
