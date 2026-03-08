@@ -5,7 +5,7 @@ import type { Me } from "@/api/types";
 interface AuthCtx {
   me: Me | null;
   loading: boolean;
-  /** true only when DATABASE_URL is set and /api/me responds with 200 */
+  /** true when DATABASE_URL is set server-side (multi-user mode) */
   isMultiUser: boolean;
   refresh: () => Promise<void>;
 }
@@ -25,18 +25,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refresh = async () => {
     setLoading(true);
     try {
-      const user = await getMe();
-      // getMe() returns null in personal mode OR when not logged in.
-      // We distinguish: if we got a non-null user, we're definitely in multi-user.
-      // If null, we stay agnostic — the UI treats personal mode as the default.
-      if (user !== null) {
-        setIsMultiUser(true);
-        setMe(user);
-      } else {
-        // Could be personal mode OR not logged in. Check by probing /api/me for 401 vs 404/405.
-        // getMe() already catches ApiError — null means either case.
-        setMe(null);
-      }
+      const { user, isMultiUser: multi } = await getMe();
+      setIsMultiUser(multi);
+      setMe(user);
     } finally {
       setLoading(false);
     }
