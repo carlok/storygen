@@ -246,6 +246,12 @@ if _multi_user:
             "is_active": user.is_active,
         }
 
+    # Gate /admin behind require_admin — serve the React SPA (index.html).
+    # React Router renders the AdminPage component client-side.
+    @app.get("/admin")
+    async def admin_page(_admin=Depends(require_admin)):
+        return FileResponse("static/index.html")
+
     @app.on_event("startup")
     async def promote_initial_admin():
         """Promote ADMIN_EMAIL to admin on first startup (no manual SQL needed).
