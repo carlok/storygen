@@ -68,7 +68,7 @@ async def auth_callback(request: Request, db: AsyncSession = Depends(get_db)):
         httponly=True,
         samesite="lax",
         max_age=60 * 60 * 24 * 30,
-        secure=os.environ.get("SECURE_COOKIES", "false").lower() == "true",
+        secure=os.environ.get("SECURE_COOKIES", "true").lower() != "false",
     )
     return response
 

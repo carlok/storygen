@@ -1,10 +1,11 @@
 import base64
 import json
 import os
+import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, List, Optional
+from typing import Annotated, List
 
 import resend
 
@@ -15,26 +16,50 @@ from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
 CONFIG_PATH = Path("/assets/config.json")
-OUTPUT_DIR = Path("/output")
+OUTPUT_DIR  = Path("/output")
 GENERATE_SCRIPT = Path("/src/generate.py")
 
 app = FastAPI()
 
-# Session middleware — required for OAuth state param
-app.add_middleware(SessionMiddleware, secret_key=os.environ.get("SECRET_KEY", "change-me"))
-
-# ── Routers ──────────────────────────────────────────────────────────────────
-# Imported lazily so the personal-mode container (no DB) still starts up fine.
+# ── Mode detection ────────────────────────────────────────────────────────────
 _multi_user = bool(os.environ.get("DATABASE_URL"))
 
+# ── Secret key: required in multi-user mode, placeholder otherwise ────────────
+# Fix #1 / CRITICAL: insecure default "change-me" is rejected at startup.
+_SECRET_KEY = os.environ.get("SECRET_KEY", "")
+if _multi_user and (not _SECRET_KEY or _SECRET_KEY == "change-me"):
+    raise RuntimeError(
+        "SECRET_KEY env var must be set to a strong random secret in multi-user mode.\n"
+        "Generate one: python -c \"import secrets; print(secrets.token_hex(32))\""
+    )
+
+# SessionMiddleware is required for OAuth state CSRF protection.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=_SECRET_KEY or "personal-mode-placeholder-not-used-for-auth",
+)
+
+# ── Routers (only loaded when DATABASE_URL is set) ────────────────────────────
 if _multi_user:
     from .routers.auth import router as auth_router
     from .routers.admin import router as admin_router
-    from .auth import get_current_user
+    from .auth import get_current_user, require_admin
     from .db.models import User
     app.include_router(auth_router)
     app.include_router(admin_router)
 
+# ── Conditional auth dependency ───────────────────────────────────────────────
+# Fix #3 / CRITICAL: in multi-user mode, all core /api/* routes require a
+# valid session. In personal mode the dependency is a no-op (returns None).
+if _multi_user:
+    async def _auth_dep(user=Depends(get_current_user)):
+        return user
+else:
+    async def _auth_dep():  # type: ignore[misc]
+        return None
+
+
+# ── Config helpers ────────────────────────────────────────────────────────────
 
 def read_config() -> dict:
     with open(CONFIG_PATH) as f:
@@ -46,8 +71,10 @@ def write_config(cfg: dict) -> None:
         json.dump(cfg, f, indent=2, ensure_ascii=False)
 
 
+# ── Core API routes ───────────────────────────────────────────────────────────
+
 @app.get("/api/blocks")
-def get_blocks():
+def get_blocks(_auth=Depends(_auth_dep)):
     cfg = read_config()
     blocks = [
         {
@@ -85,7 +112,7 @@ class BlockUpdate(BaseModel):
 
 
 @app.post("/api/generate")
-def generate(updates: List[BlockUpdate]):
+def generate(updates: List[BlockUpdate], _auth=Depends(_auth_dep)):
     cfg = read_config()
 
     for u in updates:
@@ -101,8 +128,12 @@ def generate(updates: List[BlockUpdate]):
 
     write_config(cfg)
 
+    # Fix #9 / MEDIUM: sanitize output_prefix — allow only [a-zA-Z0-9_-]
+    # so it can never inject path separators into the subprocess argument.
+    raw_prefix = str(cfg.get("output_prefix", "video") or "video")
+    prefix = re.sub(r"[^a-zA-Z0-9_-]", "_", raw_prefix)[:32]
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    filename = f"{cfg['output_prefix']}_{timestamp}.mp4"
+    filename = f"{prefix}_{timestamp}.mp4"
 
     result = subprocess.run(
         ["python", str(GENERATE_SCRIPT), filename],
@@ -120,7 +151,7 @@ def generate(updates: List[BlockUpdate]):
 
 
 @app.get("/api/image/{filename}")
-def get_image(filename: str):
+def get_image(filename: str, _auth=Depends(_auth_dep)):
     if "/" in filename or "\\" in filename or ".." in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
     image_path = Path("/assets/images") / filename
@@ -130,9 +161,20 @@ def get_image(filename: str):
 
 
 @app.get("/api/video")
-def get_video(name: str = Query(..., description="Filename returned by /api/generate")):
-    video_path = OUTPUT_DIR / name
-    if not video_path.exists() or not video_path.suffix == ".mp4":
+def get_video(
+    name: str = Query(..., description="Filename returned by /api/generate"),
+    _auth=Depends(_auth_dep),
+):
+    # Fix #2 / CRITICAL + Fix #4 / HIGH: resolve path and assert it stays
+    # inside OUTPUT_DIR; also fixes the operator-precedence ambiguity.
+    try:
+        video_path = (OUTPUT_DIR / name).resolve()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    output_root = str(OUTPUT_DIR.resolve()) + os.sep
+    if not str(video_path).startswith(output_root):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not video_path.exists() or video_path.suffix != ".mp4":
         raise HTTPException(status_code=404, detail="Video not found")
     return FileResponse(path=str(video_path), media_type="video/mp4", filename=name)
 
@@ -143,12 +185,27 @@ class EmailRequest(BaseModel):
 
 
 @app.post("/api/send-email")
-def send_email(req: EmailRequest):
-    video_path = OUTPUT_DIR / req.filename
+def send_email(req: EmailRequest, _auth=Depends(_auth_dep)):
+    # Fix #8 / HIGH: in multi-user mode, only allow sending to the authenticated
+    # user's own email — prevents using this as an open relay.
+    if _multi_user and _auth is not None and req.to != _auth.email:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only send to your own email address",
+        )
+
+    # Path traversal guard on the filename (same pattern as /api/video)
+    try:
+        video_path = (OUTPUT_DIR / req.filename).resolve()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    output_root = str(OUTPUT_DIR.resolve()) + os.sep
+    if not str(video_path).startswith(output_root):
+        raise HTTPException(status_code=400, detail="Invalid filename")
     if not video_path.exists() or video_path.suffix != ".mp4":
         raise HTTPException(status_code=404, detail="Video not found")
 
-    api_key = os.environ.get("RESEND_API_KEY", "")
+    api_key  = os.environ.get("RESEND_API_KEY", "")
     from_addr = os.environ.get("RESEND_FROM", "")
     if not api_key or not from_addr:
         raise HTTPException(
@@ -175,7 +232,7 @@ def send_email(req: EmailRequest):
     return {"status": "ok"}
 
 
-# ── Multi-user endpoints (only active when DATABASE_URL is set) ──────────────
+# ── Multi-user endpoints ──────────────────────────────────────────────────────
 
 if _multi_user:
     @app.get("/api/me")
@@ -189,8 +246,10 @@ if _multi_user:
             "is_active": user.is_active,
         }
 
+    # Fix #10 / MEDIUM: gate the admin HTML page behind require_admin so the
+    # UI structure is not disclosed to unauthenticated or non-admin users.
     @app.get("/admin")
-    async def admin_page():
+    async def admin_page(_admin=Depends(require_admin)):
         return FileResponse("static/admin.html")
 
     @app.on_event("startup")
@@ -199,7 +258,7 @@ if _multi_user:
         admin_email = os.environ.get("ADMIN_EMAIL", "")
         if not admin_email:
             return
-        from sqlalchemy import select, update
+        from sqlalchemy import update
         from .db.engine import AsyncSessionLocal
         from .db.models import User as UserModel
         async with AsyncSessionLocal() as db:
@@ -211,5 +270,5 @@ if _multi_user:
             await db.commit()
 
 
-# ── Static files (index.html, app.js, style.css, admin.html) ─────────────────
+# ── Static files (Vite build output / vanilla fallback) ──────────────────────
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

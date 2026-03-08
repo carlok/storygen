@@ -28,7 +28,13 @@ oauth.register(
 
 # ── Session cookie (signed, not encrypted) ──────────────────────────────────
 
-SECRET_KEY = os.environ.get("SECRET_KEY", "change-me")
+_raw_key = os.environ.get("SECRET_KEY", "")
+if not _raw_key or _raw_key == "change-me":
+    raise RuntimeError(
+        "SECRET_KEY env var is not set or still 'change-me'.\n"
+        "Generate a strong key: python -c \"import secrets; print(secrets.token_hex(32))\""
+    )
+SECRET_KEY = _raw_key
 SESSION_COOKIE = "storygen_session"
 SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
 
