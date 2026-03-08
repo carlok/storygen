@@ -4,7 +4,6 @@ import { useAuth } from "@/context/AuthContext";
 import { logout } from "@/api/auth";
 import { getAdminStats, listUsers, patchUser, deleteUser } from "@/api/admin";
 import { Modal } from "@/components/Modal";
-import { Footer } from "@/components/Footer";
 import { StatsBar } from "@/features/admin/StatsBar";
 import { AdminTable } from "@/features/admin/AdminTable";
 import type { AdminStats, UserSummary } from "@/api/types";
@@ -13,10 +12,16 @@ export function AdminPage() {
   const { me, loading: authLoading, refresh } = useAuth();
   const navigate = useNavigate();
 
-  const [stats, setStats]     = useState<AdminStats | null>(null);
-  const [users, setUsers]     = useState<UserSummary[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [stats, setStats]       = useState<AdminStats | null>(null);
+  const [users, setUsers]       = useState<UserSummary[]>([]);
+  const [loading, setLoading]   = useState(true);
   const [modalMsg, setModalMsg] = useState<string | null>(null);
+
+  // Switch body to full-width admin layout
+  useEffect(() => {
+    document.body.classList.add("admin-layout");
+    return () => document.body.classList.remove("admin-layout");
+  }, []);
 
   const reload = async () => {
     const [s, u] = await Promise.all([getAdminStats(), listUsers()]);
@@ -40,7 +45,7 @@ export function AdminPage() {
   };
 
   const handleDelete = async (id: string, email: string) => {
-    if (!window.confirm(`Permanently delete ${email} and all their data? This cannot be undone.`)) return;
+    if (!window.confirm(`Permanently delete ${email} and all their data?\nThis cannot be undone.`)) return;
     setModalMsg("Deleting…");
     try { await deleteUser(id); await reload(); }
     finally { setModalMsg(null); }
@@ -53,48 +58,57 @@ export function AdminPage() {
   };
 
   return (
-    <>
-      <div className="admin-container">
+    <div className="admin-shell">
 
-        {/* ── Page header ── */}
-        <div className="admin-page-header">
-          <h1 className="admin-page-title">Admin Panel</h1>
-          <div className="admin-page-meta">
-            {me?.avatar_url && (
-              <img className="header-avatar" src={me.avatar_url} alt="" />
-            )}
-            <span style={{ fontSize: "0.82rem", color: "var(--text-dim)" }}>
-              {me?.display_name ?? me?.email}
-            </span>
-            <a href="/" className="btn-back">← Back to app</a>
-            <button className="btn-logout" onClick={handleLogout}>Sign out</button>
-          </div>
+      {/* ── Sticky top bar ── */}
+      <header className="admin-topbar">
+        <div className="admin-topbar-left">
+          <span className="admin-topbar-wordmark">storygen</span>
+          <div className="admin-topbar-sep" />
+          <span className="admin-topbar-label">Admin</span>
         </div>
 
+        <div className="admin-topbar-right">
+          {me?.avatar_url && (
+            <img className="admin-topbar-avatar" src={me.avatar_url} alt="" />
+          )}
+          <span className="admin-topbar-name">{me?.display_name ?? me?.email}</span>
+          <a href="/" className="btn-topbar">← Back to app</a>
+          <button className="btn-topbar btn-topbar-danger" onClick={handleLogout}>
+            Sign out
+          </button>
+        </div>
+      </header>
+
+      {/* ── Main content ── */}
+      <main className="admin-content">
         {loading ? (
-          <p style={{ color: "var(--text-muted)", padding: "2rem 0" }}>Loading…</p>
+          <div className="admin-loading">Loading…</div>
         ) : (
           <>
-            {/* ── Stats ── */}
-            {stats && <StatsBar stats={stats} />}
+            {/* Stats */}
+            {stats && (
+              <section>
+                <div className="admin-section-head">
+                  <h2 className="admin-section-title">Overview</h2>
+                </div>
+                <StatsBar stats={stats} />
+              </section>
+            )}
 
-            {/* ── Users table ── */}
-            <div>
-              <div className="section-header">
-                <span className="section-title">Users</span>
-                <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
-                  {users.length} {users.length === 1 ? "user" : "users"}
-                </span>
+            {/* Users */}
+            <section>
+              <div className="admin-section-head">
+                <h2 className="admin-section-title">Users</h2>
+                <span className="admin-count-badge">{users.length}</span>
               </div>
               <AdminTable users={users} onPatch={handlePatch} onDelete={handleDelete} />
-            </div>
+            </section>
           </>
         )}
+      </main>
 
-      </div>
-
-      <Footer />
       <Modal visible={modalMsg !== null} message={modalMsg ?? ""} />
-    </>
+    </div>
   );
 }
