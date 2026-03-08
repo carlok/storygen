@@ -41,10 +41,10 @@ app.add_middleware(
 
 # ── Routers (only loaded when DATABASE_URL is set) ────────────────────────────
 if _multi_user:
-    from .routers.auth import router as auth_router
-    from .routers.admin import router as admin_router
-    from .auth import get_current_user, require_admin
-    from .db.models import User
+    from routers.auth import router as auth_router
+    from routers.admin import router as admin_router
+    from auth import get_current_user, require_admin
+    from db.models import User
     app.include_router(auth_router)
     app.include_router(admin_router)
 
@@ -259,8 +259,8 @@ if _multi_user:
         if not admin_email:
             return
         from sqlalchemy import update
-        from .db.engine import AsyncSessionLocal
-        from .db.models import User as UserModel
+        from db.engine import AsyncSessionLocal
+        from db.models import User as UserModel
         async with AsyncSessionLocal() as db:
             await db.execute(
                 update(UserModel)

@@ -6,9 +6,9 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..auth import SESSION_COOKIE, make_session_cookie, oauth
-from ..db.engine import get_db
-from ..db.models import User
+from auth import SESSION_COOKIE, make_session_cookie, oauth
+from db.engine import get_db
+from db.models import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 

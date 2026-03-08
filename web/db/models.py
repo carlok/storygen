@@ -6,7 +6,7 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstr
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .engine import Base
+from db.engine import Base
 
 
 def _now() -> datetime:

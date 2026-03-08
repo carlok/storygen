@@ -8,8 +8,8 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .db.engine import get_db
-from .db.models import User
+from db.engine import get_db
+from db.models import User
 
 # ── OAuth client ────────────────────────────────────────────────────────────
 

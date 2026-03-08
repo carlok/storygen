@@ -10,9 +10,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..auth import require_admin
-from ..db.engine import get_db
-from ..db.models import Job, User
+from auth import require_admin
+from db.engine import get_db
+from db.models import Job, User
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
