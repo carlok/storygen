@@ -254,20 +254,28 @@ if _multi_user:
 
     @app.on_event("startup")
     async def promote_initial_admin():
-        """Promote ADMIN_EMAIL to admin on first startup (no manual SQL needed)."""
+        """Promote ADMIN_EMAIL to admin on first startup (no manual SQL needed).
+        Wrapped in try/except so a missing table or DB hiccup doesn't crash startup.
+        """
         admin_email = os.environ.get("ADMIN_EMAIL", "")
         if not admin_email:
             return
-        from sqlalchemy import update
-        from db.engine import AsyncSessionLocal
-        from db.models import User as UserModel
-        async with AsyncSessionLocal() as db:
-            await db.execute(
-                update(UserModel)
-                .where(UserModel.email == admin_email)
-                .values(is_admin=True)
+        try:
+            from sqlalchemy import update
+            from db.engine import AsyncSessionLocal
+            from db.models import User as UserModel
+            async with AsyncSessionLocal() as db:
+                await db.execute(
+                    update(UserModel)
+                    .where(UserModel.email == admin_email)
+                    .values(is_admin=True)
+                )
+                await db.commit()
+        except Exception as exc:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).warning(
+                "promote_initial_admin skipped (run migrations first): %s", exc
             )
-            await db.commit()
 
 
 # ── Static files (Vite build output / vanilla fallback) ──────────────────────

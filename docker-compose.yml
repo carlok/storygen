@@ -58,6 +58,23 @@ services:
     volumes:
       - .:/workspace           # workspace root so ../web/static resolves correctly
 
+  # ── DB migrations (run once after first 'up', or after schema changes) ────────
+  #   podman compose --profile multi-user run --rm migrate
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backend-base
+    profiles: [multi-user]
+    command: alembic upgrade head
+    env_file: .env
+    volumes:
+      - .:/workspace           # workspace root where alembic.ini lives
+    working_dir: /workspace
+    depends_on:
+      db:
+        condition: service_healthy
+
   # ── Production DB (multi-user mode) ──────────────────────────────────────────
   db:
     image: postgres:16-alpine
