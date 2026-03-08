@@ -68,8 +68,8 @@ async def admin_stats(
     total_users = (await db.execute(select(func.count()).select_from(User))).scalar_one()
     total_jobs  = (await db.execute(select(func.count()).select_from(Job))).scalar_one()
     disk_bytes  = sum(
-        _user_storage_bytes(str(row.id))
-        for row in (await db.execute(select(User.id))).scalars()
+        _user_storage_bytes(str(uid))
+        for uid in (await db.execute(select(User.id))).scalars()
     )
     return StatsResponse(total_users=total_users, total_jobs=total_jobs, disk_bytes=disk_bytes)
 
