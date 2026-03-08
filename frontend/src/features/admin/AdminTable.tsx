@@ -12,87 +12,103 @@ function Avatar({ u }: { u: UserSummary }) {
     return <img className="avatar" src={u.avatar_url} alt="" />;
   }
   const initial = (u.display_name || u.email || "?")[0].toUpperCase();
-  return <span className="avatar-placeholder">{initial}</span>;
+  return <span className="avatar-initials">{initial}</span>;
 }
 
 export function AdminTable({ users, onPatch, onDelete }: Props) {
   if (!users.length) {
-    return <div className="empty-msg">No users yet.</div>;
+    return <div className="admin-empty">No users yet.</div>;
   }
 
   return (
-    <table>
-      <thead>
-        <tr>
-          <th>User</th>
-          <th>Email</th>
-          <th>Joined</th>
-          <th>Jobs</th>
-          <th>Status</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {users.map((u) => (
-          <tr key={u.id}>
-            <td>
-              <Avatar u={u} />
-              <strong>{u.display_name ?? "—"}</strong>
-            </td>
-            <td>{u.email}</td>
-            <td>{fmtDate(u.created_at)}</td>
-            <td>{u.job_count}</td>
-            <td>
-              <span className={`badge ${u.is_active ? "badge-active" : "badge-disabled"}`}>
-                {u.is_active ? "Active" : "Disabled"}
-              </span>
-              {u.is_admin && (
-                <>&nbsp;<span className="badge badge-admin">Admin</span></>
-              )}
-            </td>
-            <td>
-              <div className="action-cell">
-                {u.is_active ? (
-                  <button
-                    className="btn-sm btn-disable"
-                    onClick={() => onPatch(u.id, { is_active: false })}
-                  >
-                    Disable
-                  </button>
-                ) : (
-                  <button
-                    className="btn-sm btn-enable"
-                    onClick={() => onPatch(u.id, { is_active: true })}
-                  >
-                    Enable
-                  </button>
-                )}
-                {u.is_admin ? (
-                  <button
-                    className="btn-sm btn-rmadmin"
-                    onClick={() => onPatch(u.id, { is_admin: false })}
-                  >
-                    Revoke admin
-                  </button>
-                ) : (
-                  <button
-                    className="btn-sm btn-mkadmin"
-                    onClick={() => onPatch(u.id, { is_admin: true })}
-                  >
-                    Make admin
-                  </button>
-                )}
-                <button
-                  className="btn-sm btn-delete"
-                  onClick={() => onDelete(u.id, u.email)}
-                >
-                  Delete
-                </button>
-              </div>
-            </td>
+    <div className="admin-table-wrap">
+      <table className="admin-table">
+        <thead>
+          <tr>
+            <th>User</th>
+            <th>Joined</th>
+            <th style={{ textAlign: "center" }}>Jobs</th>
+            <th>Status</th>
+            <th>Actions</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {users.map((u) => (
+            <tr key={u.id}>
+              {/* User — avatar + name + email stacked */}
+              <td>
+                <div className="user-cell">
+                  <Avatar u={u} />
+                  <div className="user-info">
+                    <span className="user-name">{u.display_name ?? "—"}</span>
+                    <span className="user-email">{u.email}</span>
+                  </div>
+                </div>
+              </td>
+
+              {/* Joined */}
+              <td>{fmtDate(u.created_at)}</td>
+
+              {/* Jobs */}
+              <td style={{ textAlign: "center" }}>{u.job_count}</td>
+
+              {/* Status badges */}
+              <td>
+                <div className="badges-cell">
+                  <span className={`badge ${u.is_active ? "badge-active" : "badge-disabled"}`}>
+                    {u.is_active ? "Active" : "Disabled"}
+                  </span>
+                  {u.is_admin && (
+                    <span className="badge badge-admin">Admin</span>
+                  )}
+                </div>
+              </td>
+
+              {/* Actions */}
+              <td>
+                <div className="actions-cell">
+                  {u.is_active ? (
+                    <button
+                      className="btn-sm btn-sm-neutral"
+                      onClick={() => onPatch(u.id, { is_active: false })}
+                    >
+                      Disable
+                    </button>
+                  ) : (
+                    <button
+                      className="btn-sm btn-sm-accent"
+                      onClick={() => onPatch(u.id, { is_active: true })}
+                    >
+                      Enable
+                    </button>
+                  )}
+                  {u.is_admin ? (
+                    <button
+                      className="btn-sm btn-sm-neutral"
+                      onClick={() => onPatch(u.id, { is_admin: false })}
+                    >
+                      Revoke admin
+                    </button>
+                  ) : (
+                    <button
+                      className="btn-sm btn-sm-neutral"
+                      onClick={() => onPatch(u.id, { is_admin: true })}
+                    >
+                      Make admin
+                    </button>
+                  )}
+                  <button
+                    className="btn-sm btn-sm-danger"
+                    onClick={() => onDelete(u.id, u.email)}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

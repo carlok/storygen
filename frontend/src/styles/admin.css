@@ -1,43 +1,126 @@
 /* Admin panel — layout, stats bar, table, badges, action buttons */
 
+/* ── Admin page layout ───────────────────────────────────────────────────── */
+.admin-container {
+  width: 100%;
+  max-width: 1100px;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding-bottom: 2rem;
+}
+
+.admin-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.admin-page-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  background: linear-gradient(135deg, #fff 30%, #a5b4fc 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin: 0;
+}
+
+.admin-page-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.btn-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 500;
+  padding: 0.4rem 0.85rem;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.btn-back:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  border-color: rgba(255,255,255,0.18);
+}
+
+/* ── Section header ──────────────────────────────────────────────────────── */
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.section-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
 /* ── Stats bar ───────────────────────────────────────────────────────────── */
 .stats-bar {
   display: flex;
   gap: 1rem;
-  margin-bottom: 1.5rem;
   flex-wrap: wrap;
 }
 
 .stat-card {
-  flex: 1 1 140px;
-  background: var(--surface, #1e1e2e);
-  border: 1px solid var(--border, #313244);
-  border-radius: 10px;
-  padding: 1rem 1.25rem;
+  flex: 1 1 160px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.4rem;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.4rem;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+  transition: border-color 0.2s;
+}
+.stat-card:hover {
+  border-color: rgba(99, 102, 241, 0.3);
 }
 
 .stat-label {
-  font-size: 0.75rem;
+  font-size: 0.72rem;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted, #6c7086);
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
 }
 
 .stat-value {
-  font-size: 1.75rem;
+  font-size: 2rem;
   font-weight: 700;
-  color: var(--text, #cdd6f4);
+  color: var(--text);
   line-height: 1;
+  letter-spacing: -0.03em;
 }
 
 /* ── Admin table ─────────────────────────────────────────────────────────── */
 .admin-table-wrap {
   overflow-x: auto;
-  border-radius: 10px;
-  border: 1px solid var(--border, #313244);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.25);
 }
 
 .admin-table {
@@ -48,19 +131,25 @@
 
 .admin-table th,
 .admin-table td {
-  padding: 0.6rem 0.9rem;
+  padding: 0.65rem 1rem;
   text-align: left;
-  border-bottom: 1px solid var(--border, #313244);
+  border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
 
 .admin-table th {
-  background: var(--surface, #1e1e2e);
-  color: var(--muted, #6c7086);
+  background: rgba(255,255,255,0.02);
+  color: var(--text-muted);
   font-weight: 600;
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.07em;
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
+}
+
+.admin-table tbody tr {
+  transition: background 0.12s;
 }
 
 .admin-table tbody tr:hover {
@@ -71,11 +160,18 @@
   border-bottom: none;
 }
 
-/* ── User avatar ─────────────────────────────────────────────────────────── */
+/* ── User cell (avatar + name + email stacked) ───────────────────────────── */
 .user-cell {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.65rem;
+}
+
+.user-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
 }
 
 .avatar {
@@ -90,55 +186,66 @@
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: var(--accent, #6366f1);
+  background: linear-gradient(135deg, var(--accent), #818cf8);
   color: #fff;
-  font-size: 0.75rem;
+  font-size: 0.73rem;
   font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  box-shadow: 0 2px 8px var(--accent-glow);
 }
 
 .user-name {
   font-weight: 500;
-  color: var(--text, #cdd6f4);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .user-email {
-  font-size: 0.75rem;
-  color: var(--muted, #6c7086);
+  font-size: 0.73rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ── Status / role badges ────────────────────────────────────────────────── */
+.badges-cell {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  padding: 0.2rem 0.55rem;
+  padding: 0.18rem 0.5rem;
   border-radius: 999px;
-  font-size: 0.7rem;
-  font-weight: 600;
-  letter-spacing: 0.03em;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
 .badge-active {
-  background: rgba(166, 227, 161, 0.15);
-  color: #a6e3a1;
-  border: 1px solid rgba(166, 227, 161, 0.3);
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
 }
 
 .badge-disabled {
-  background: rgba(243, 139, 168, 0.12);
-  color: #f38ba8;
-  border: 1px solid rgba(243, 139, 168, 0.25);
+  background: rgba(248, 113, 113, 0.12);
+  color: var(--red);
+  border: 1px solid rgba(248, 113, 113, 0.25);
 }
 
 .badge-admin {
-  background: rgba(203, 166, 247, 0.15);
-  color: #cba6f7;
-  border: 1px solid rgba(203, 166, 247, 0.3);
+  background: rgba(165, 180, 252, 0.15);
+  color: #a5b4fc;
+  border: 1px solid rgba(165, 180, 252, 0.3);
 }
 
 /* ── Small action buttons ────────────────────────────────────────────────── */
@@ -146,17 +253,20 @@
   display: flex;
   gap: 0.4rem;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 .btn-sm {
-  padding: 0.25rem 0.6rem;
+  padding: 0.28rem 0.65rem;
   border-radius: 6px;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-weight: 600;
+  font-family: inherit;
   border: 1px solid transparent;
   cursor: pointer;
-  transition: opacity 0.15s, background 0.15s;
+  transition: opacity 0.15s, background 0.15s, border-color 0.15s;
   white-space: nowrap;
+  line-height: 1.4;
 }
 
 .btn-sm:disabled {
@@ -165,39 +275,40 @@
 }
 
 .btn-sm-neutral {
-  background: var(--surface, #1e1e2e);
-  border-color: var(--border, #313244);
-  color: var(--text, #cdd6f4);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--border);
+  color: var(--text-dim);
 }
-
 .btn-sm-neutral:hover:not(:disabled) {
-  background: var(--border, #313244);
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255,255,255,0.18);
+  color: var(--text);
 }
 
 .btn-sm-danger {
-  background: rgba(243, 139, 168, 0.1);
-  border-color: rgba(243, 139, 168, 0.3);
-  color: #f38ba8;
+  background: rgba(248, 113, 113, 0.1);
+  border-color: rgba(248, 113, 113, 0.3);
+  color: var(--red);
 }
-
 .btn-sm-danger:hover:not(:disabled) {
-  background: rgba(243, 139, 168, 0.2);
+  background: rgba(248, 113, 113, 0.2);
+  border-color: rgba(248, 113, 113, 0.45);
 }
 
 .btn-sm-accent {
   background: rgba(99, 102, 241, 0.15);
   border-color: rgba(99, 102, 241, 0.4);
-  color: #818cf8;
+  color: #a5b4fc;
 }
-
 .btn-sm-accent:hover:not(:disabled) {
   background: rgba(99, 102, 241, 0.25);
+  border-color: rgba(99, 102, 241, 0.6);
 }
 
 /* ── Empty state ─────────────────────────────────────────────────────────── */
 .admin-empty {
   text-align: center;
-  padding: 3rem 1rem;
-  color: var(--muted, #6c7086);
+  padding: 3.5rem 1rem;
+  color: var(--text-muted);
   font-size: 0.9rem;
 }
