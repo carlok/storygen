@@ -3,7 +3,7 @@ import { logout } from "@/api/auth";
 import { useAuth } from "@/context/AuthContext";
 
 export function Header() {
-  const { me, isMultiUser, refresh } = useAuth();
+  const { me, refresh } = useAuth();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
@@ -19,7 +19,7 @@ export function Header() {
         <h1>Story Video Generator</h1>
       </Link>
 
-      {isMultiUser && me && (
+      {me && (
         <div className="header-user">
           {me.avatar_url && (
             <img className="header-avatar" src={me.avatar_url} alt="" />
