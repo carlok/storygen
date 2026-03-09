@@ -1,20 +1,150 @@
 services:
+
+  # ── CLI: run generate.py directly without the web UI ─────────────────────────
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backend-base
     profiles: [cli]
     volumes:
       - ./src:/app
       - ./assets:/assets
       - ./output:/output
 
+  # ── Web: FastAPI backend (always multi-user) ──────────────────────────────────
   web:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backend-base
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"
     env_file: .env
+    environment:
+      # Force polling-based file watcher so --reload works on macOS+Podman.
+      WATCHFILES_FORCE_POLLING: "true"
     volumes:
       - ./web:/app
       - ./src:/src
       - ./assets:/assets
       - ./output:/output
+      - storygen_storage:/storage
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ── Frontend dev server (Vite HMR, proxies /api and /auth to web) ─────────────
+  #   podman compose --profile dev up frontend-dev
+  frontend-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      target: frontend-dev
+    profiles: [dev]
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app        # live source code → hot reload
+      - /app/node_modules      # anonymous: keep container's node_modules intact
+
+  # ── Build frontend once (output lands in web/static via vite outDir) ──────────
+  #   podman compose --profile build run --rm frontend-build
+  frontend-build:
+    image: node:20-alpine
+    profiles: [build]
+    command: >
+      sh -c "
+        cd /workspace/frontend &&
+        npm ci &&
+        npm run build
+      "
+    volumes:
+      - .:/workspace           # workspace root so ../web/static resolves correctly
+
+  # ── DB migrations (run once after first 'up', or after schema changes) ────────
+  #   podman compose run --rm migrate
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backend-base
+    command: alembic upgrade head
+    env_file: .env
+    volumes:
+      - .:/workspace           # workspace root where alembic.ini lives
+    working_dir: /workspace
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ── Production DB ─────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: storygen
+      POSTGRES_USER: storygen
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U storygen"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Test DB (ephemeral — no named volume, dropped after test run) ─────────────
+  db-test:
+    image: postgres:16-alpine
+    profiles: [test]
+    environment:
+      POSTGRES_DB: storygen_test
+      POSTGRES_USER: storygen
+      POSTGRES_PASSWORD: storygen_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U storygen"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Backend tests (pytest + coverage, against db-test) ────────────────────────
+  backend-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backend-test
+    profiles: [test]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://storygen:storygen_test@db-test/storygen_test
+      SECRET_KEY: test-secret-key-32chars-abcde-xyz0!
+      ADMIN_EMAIL: ""
+      SMTP_HOST: ""
+      SMTP_PORT: "587"
+      SMTP_USER: ""
+      SMTP_PASSWORD: ""
+      SMTP_FROM: ""
+      DAILY_VIDEO_LIMIT: "3"
+      PYTHONPATH: /app
+    volumes:
+      - .:/workspace           # workspace root (pytest discovers tests/ and web/)
+      - ./web:/app
+      - ./src:/src
+      - ./assets:/assets
+      - ./output:/output
+    working_dir: /workspace
+    depends_on:
+      db-test:
+        condition: service_healthy
+
+  # ── Frontend tests (vitest + coverage, source baked into image) ───────────────
+  frontend-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      target: frontend-test
+    profiles: [test]
+
+volumes:
+  pgdata:
+  storygen_storage:

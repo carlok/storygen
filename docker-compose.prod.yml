@@ -1,0 +1,97 @@
+# ── Production compose — for self-hosted VPS or local staging ─────────────────
+#
+# Usage:
+#   cp .env.example .env && nano .env          # fill in all secrets
+#   docker compose -f docker-compose.prod.yml build
+#   docker compose -f docker-compose.prod.yml up -d db
+#   docker compose -f docker-compose.prod.yml run --rm migrate
+#   docker compose -f docker-compose.prod.yml up -d web
+#
+# Differences from docker-compose.yml (dev):
+#   • Uses Dockerfile.prod (multi-stage, code baked in — no volume mounts for source)
+#   • Named volumes for /output and /storage (data persists across deploys)
+#   • No --reload flag; uvicorn runs in production mode
+#   • Restart policy: always
+#   • Optional Caddy reverse-proxy with automatic HTTPS (uncomment to use)
+
+services:
+
+  # ── Database ────────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: storygen
+      POSTGRES_USER: storygen
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U storygen"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Do NOT expose port 5432 to the host in production.
+    # The web service reaches the DB via the internal Docker network.
+
+  # ── Migrations (run once; exit after completion) ────────────────────────────
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    command: >
+      sh -c "cd /alembic/.. && alembic upgrade head"
+    env_file: .env
+    working_dir: /
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  # ── Web (FastAPI + uvicorn) ─────────────────────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    restart: always
+    ports:
+      - "8000:8000"       # expose directly; put Caddy/nginx in front for HTTPS
+    env_file: .env
+    volumes:
+      - output:/output    # generated MP4s persist across deploys
+      - storage:/storage  # per-user storage directory
+      # Mount your real assets if they are not baked into the image:
+      # - ./assets:/assets:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ── Caddy — automatic HTTPS reverse proxy (optional) ───────────────────────
+  # Uncomment this block to get Let's Encrypt HTTPS in front of the web service.
+  # Replace "storygen.example.com" with your real domain.
+  #
+  # caddy:
+  #   image: caddy:2-alpine
+  #   restart: always
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
+  #     - caddy_data:/data
+  #     - caddy_config:/config
+  #   depends_on:
+  #     - web
+
+volumes:
+  pgdata:
+  output:
+  storage:
+  # caddy_data:
+  # caddy_config:

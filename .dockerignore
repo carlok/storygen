@@ -1,0 +1,29 @@
+# ── Node.js ───────────────────────────────────────────────────────────────────
+# Exclude host node_modules; each Docker stage runs its own `npm ci`.
+# Without this, COPY frontend/ . would overwrite the container's Linux binaries
+# with host (macOS) ones, causing EACCES errors on platform-specific packages.
+frontend/node_modules
+
+# ── Python bytecode ───────────────────────────────────────────────────────────
+**/__pycache__
+**/*.pyc
+**/*.pyo
+
+# ── Coverage / test artefacts ─────────────────────────────────────────────────
+coverage/
+.coverage
+htmlcov/
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+.env
+.env.*
+
+# ── Generated output (large mp4 files — never bake into the image) ─────────────
+output/
+
+# ── Git ───────────────────────────────────────────────────────────────────────
+.git
+.gitignore
