@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { logout } from "@/api/auth";
 import { useAuth } from "@/context/AuthContext";
 
@@ -14,7 +14,11 @@ export function Header() {
 
   return (
     <div className="app-header">
-      <h1>Story Video Generator</h1>
+      {/* Clicking the title always goes home */}
+      <Link to="/" className="app-title-link">
+        <h1>Story Video Generator</h1>
+      </Link>
+
       {isMultiUser && me && (
         <div className="header-user">
           {me.avatar_url && (
@@ -22,9 +26,7 @@ export function Header() {
           )}
           <span>{me.display_name ?? me.email}</span>
           {me.is_admin && (
-            <a href="/admin" style={{ fontSize: "0.7rem", color: "var(--accent)", textDecoration: "none" }}>
-              Admin
-            </a>
+            <Link to="/admin" className="header-admin-link">Admin</Link>
           )}
           <button className="btn-logout" onClick={handleLogout}>
             Sign out

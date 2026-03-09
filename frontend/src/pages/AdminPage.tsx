@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { getAdminStats, listUsers, patchUser, deleteUser } from "@/api/admin";
 import { Modal } from "@/components/Modal";
@@ -50,23 +50,30 @@ export function AdminPage() {
     <>
       <Header />
       <div className="container">
+
+        {/* ── Page title + back link ── */}
+        <div className="admin-page-nav">
+          <Link to="/" className="admin-back-link">← Home</Link>
+          <div className="nav-sep" />
+          <h2>Admin Panel</h2>
+        </div>
+
         {loading ? (
           <p style={{ color: "var(--text-muted)" }}>Loading…</p>
         ) : (
           <>
-            {/* Stats — same glass-card look as .actions */}
+            {/* Stats */}
             {stats && <StatsBar stats={stats} />}
 
             {/* Users table */}
-            <div style={{ marginTop: "1.25rem" }}>
-              <div className="admin-section-head">
-                <span className="admin-section-title">Users</span>
-                <span className="admin-count-badge">{users.length}</span>
-              </div>
-              <AdminTable users={users} onPatch={handlePatch} onDelete={handleDelete} />
+            <div className="admin-section-head">
+              <span className="admin-section-title">Users</span>
+              <span className="admin-count-badge">{users.length}</span>
             </div>
+            <AdminTable users={users} onPatch={handlePatch} onDelete={handleDelete} />
           </>
         )}
+
       </div>
       <Footer />
       <Modal visible={modalMsg !== null} message={modalMsg ?? ""} />
