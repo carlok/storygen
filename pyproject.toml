@@ -22,12 +22,23 @@ markers = [
 
 # ── Coverage ──────────────────────────────────────────────────────────────────
 [tool.coverage.run]
-source   = ["web"]
+# Use /app (the PYTHONPATH root) as the coverage source so that bare imports
+# like `from auth import …` and package imports like `web.auth` are resolved
+# to the same physical files.  Bare imports via PYTHONPATH always win over
+# the /workspace/web/ path in coverage's __file__ tracking.
+source   = ["/app"]
 branch   = true
 omit     = [
-  "web/static/*",
-  "web/db/engine.py",   # thin glue, tested indirectly
-  "alembic/*",
+  "/app/static/*",
+  "/app/db/engine.py",   # thin glue, tested indirectly
+  "/app/alembic/*",
+]
+
+# Normalise /app/ → web/ so the terminal report shows the familiar paths.
+[tool.coverage.paths]
+source = [
+  "web/",
+  "/app/",
 ]
 
 [tool.coverage.report]

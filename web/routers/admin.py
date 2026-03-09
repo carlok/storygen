@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 STORAGE_ROOT = Path("/storage")
 
 
-# ── Schemas ──────────────────────────────────────────────────────────────────
+# ── Schemas ───────────────────────────────────────────────────────────────────
 
 class UserSummary(BaseModel):
     id: str
@@ -49,7 +49,7 @@ class StatsResponse(BaseModel):
     disk_bytes: int
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _user_storage_bytes(user_id: str) -> int:
     path = STORAGE_ROOT / user_id
@@ -58,7 +58,7 @@ def _user_storage_bytes(user_id: str) -> int:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
 
-# ── Routes ───────────────────────────────────────────────────────────────────
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.get("/stats", response_model=StatsResponse)
 async def admin_stats(
@@ -78,10 +78,9 @@ async def admin_stats(
 async def list_users(
     _admin: Annotated[User, Depends(require_admin)],
     db: AsyncSession = Depends(get_db),
-    offset: int = 0,
-    limit: int = 50,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
 ):
-    # Users + job count per user
     rows = (
         await db.execute(
             select(User, func.count(Job.id).label("job_count"))
@@ -151,6 +150,7 @@ async def get_user(
 async def patch_user(
     user_id: UUID,
     body: PatchUserRequest,
+    background_tasks: BackgroundTasks,
     admin: Annotated[User, Depends(require_admin)],
     db: AsyncSession = Depends(get_db),
 ):
@@ -163,10 +163,24 @@ async def patch_user(
     if user.id == admin.id and body.is_admin is False:
         raise HTTPException(400, "Cannot revoke your own admin rights")
 
-    if body.is_active is not None:
+    # Collect which changes actually happened (only notify on real state changes)
+    notifications: list[tuple[str, str]] = []
+
+    if body.is_active is not None and body.is_active != user.is_active:
         user.is_active = body.is_active
-    if body.is_admin is not None:
+        action = "enabled" if body.is_active else "disabled"
+        notifications.append((
+            f"[storygen] User {action}: {user.email}",
+            f"Admin {admin.email} {action} user account {user.email}.",
+        ))
+
+    if body.is_admin is not None and body.is_admin != user.is_admin:
         user.is_admin = body.is_admin
+        action = "granted" if body.is_admin else "revoked"
+        notifications.append((
+            f"[storygen] Admin rights {action}: {user.email}",
+            f"Admin {admin.email} {action} admin rights for {user.email}.",
+        ))
 
     await db.commit()
     await db.refresh(user)
@@ -174,6 +188,11 @@ async def patch_user(
     job_count = (
         await db.execute(select(func.count()).select_from(Job).where(Job.user_id == user.id))
     ).scalar_one()
+
+    # Fire-and-forget (local import avoids circular dep at module level)
+    from main import _notify_admin
+    for subject, body_text in notifications:
+        background_tasks.add_task(_notify_admin, subject, body_text)
 
     return UserSummary(
         id=str(user.id),
@@ -190,6 +209,7 @@ async def patch_user(
 @router.delete("/users/{user_id}", status_code=204)
 async def delete_user(
     user_id: UUID,
+    background_tasks: BackgroundTasks,
     admin: Annotated[User, Depends(require_admin)],
     db: AsyncSession = Depends(get_db),
 ):
@@ -200,6 +220,8 @@ async def delete_user(
     if user.id == admin.id:
         raise HTTPException(400, "Cannot delete yourself")
 
+    deleted_email = user.email  # capture before ORM delete
+
     # Remove storage on disk
     user_storage = STORAGE_ROOT / str(user.id)
     if user_storage.exists():
@@ -207,3 +229,10 @@ async def delete_user(
 
     await db.delete(user)
     await db.commit()
+
+    from main import _notify_admin  # local import avoids circular dep at module level
+    background_tasks.add_task(
+        _notify_admin,
+        f"[storygen] User deleted: {deleted_email}",
+        f"Admin {admin.email} permanently deleted user {deleted_email}.",
+    )

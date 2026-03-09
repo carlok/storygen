@@ -1,6 +1,6 @@
 """Tests for POST /api/generate."""
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -13,21 +13,22 @@ def _make_proc(returncode=0, stdout="", stderr=""):
     return p
 
 
+_BASE_UPDATE = {
+    "index": 0,
+    "text": "Updated scene 1",
+    "align_center": False,
+    "center_x": False,
+    "bw": False,
+    "fade_in": True,
+    "fade_out": False,
+    "text_position": [100, 900],
+}
+
+
 @pytest.mark.asyncio
 async def test_generate_success(client, config_file):
     """Happy path: subprocess succeeds, filename returned."""
-    payload = [
-        {
-            "index": 0,
-            "text": "Updated scene 1",
-            "align_center": False,
-            "center_x": False,
-            "bw": False,
-            "fade_in": True,
-            "fade_out": False,
-            "text_position": [100, 900],
-        }
-    ]
+    payload = [_BASE_UPDATE]
     with patch("web.main.subprocess.run", return_value=_make_proc(0)) as mock_run:
         resp = await client.post("/api/generate", json=payload)
 
@@ -40,8 +41,9 @@ async def test_generate_success(client, config_file):
 
 
 @pytest.mark.asyncio
-async def test_generate_updates_config(client, config_file):
-    """POST /api/generate persists text changes to config.json."""
+async def test_generate_updates_config(client, mock_db_session):
+    """POST /api/generate persists block changes to the DB."""
+    _, session = mock_db_session
     payload = [
         {
             "index": 1,
@@ -55,14 +57,11 @@ async def test_generate_updates_config(client, config_file):
         }
     ]
     with patch("web.main.subprocess.run", return_value=_make_proc(0)):
-        await client.post("/api/generate", json=payload)
+        resp = await client.post("/api/generate", json=payload)
 
-    saved = json.loads(config_file.read_text())
-    block = saved["blocks"][1]
-    assert block["text"] == "Brand new caption"
-    assert block["bw"] is True
-    assert block["align_center"] is True
-    assert block["text_position"] == [50, 800]
+    assert resp.status_code == 200
+    # At minimum: one commit for the config update and one for the job record
+    assert session.commit.call_count >= 2
 
 
 @pytest.mark.asyncio
@@ -86,7 +85,7 @@ async def test_generate_invalid_block_index(client):
 
 @pytest.mark.asyncio
 async def test_generate_subprocess_failure(client):
-    """Subprocess non-zero exit → 500."""
+    """Subprocess non-zero exit → 500 with generic message."""
     payload = [
         {
             "index": 0,
@@ -106,30 +105,18 @@ async def test_generate_subprocess_failure(client):
         resp = await client.post("/api/generate", json=payload)
 
     assert resp.status_code == 500
-    assert "ffmpeg error" in resp.json()["detail"]
+    assert "Video generation failed" in resp.json()["detail"]
 
 
 @pytest.mark.asyncio
 async def test_generate_sanitizes_output_prefix(client, config_file):
     """Dangerous characters in output_prefix are stripped."""
-    import json as _json
-
-    config = _json.loads(config_file.read_text())
+    # Write malicious prefix to config_file (used as template via _read_template)
+    config = json.loads(config_file.read_text())
     config["output_prefix"] = "../../../etc/passwd"
-    config_file.write_text(_json.dumps(config))
+    config_file.write_text(json.dumps(config))
 
-    payload = [
-        {
-            "index": 0,
-            "text": "t",
-            "align_center": False,
-            "center_x": False,
-            "bw": False,
-            "fade_in": False,
-            "fade_out": False,
-            "text_position": [0, 0],
-        }
-    ]
+    payload = [_BASE_UPDATE]
     with patch("web.main.subprocess.run", return_value=_make_proc(0)) as mock_run:
         resp = await client.post("/api/generate", json=payload)
 
@@ -141,7 +128,67 @@ async def test_generate_sanitizes_output_prefix(client, config_file):
     prefix = filename.split("_20")[0]
     assert all(c.isalnum() or c in "-_" for c in prefix)
 
-    # The subprocess must have received the sanitized filename
+    # The subprocess must have received the sanitized filename as second-to-last arg:
+    # ["python", script_path, filename, tmp_config_path]
     called_args = mock_run.call_args[0][0]  # positional args list
-    assert ".." not in called_args[-1]
-    assert "/" not in called_args[-1]
+    filename_arg = called_args[-2]           # filename is second-to-last
+    assert ".." not in filename_arg
+    assert "/" not in filename_arg
+
+
+@pytest.mark.asyncio
+async def test_generate_daily_limit_429(client, mock_db_session):
+    """Daily video limit reached → 429."""
+    _, session = mock_db_session
+
+    # Make execute() return a count above the default limit (3)
+    high_count = MagicMock()
+    high_count.scalar_one.return_value = 99
+    session.execute = AsyncMock(return_value=high_count)
+
+    payload = [_BASE_UPDATE]
+    resp = await client.post("/api/generate", json=payload)
+
+    assert resp.status_code == 429
+    assert "Daily limit" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_generate_creates_job_record(client, mock_db_session):
+    """Successful generate creates a Job record via session.add."""
+    _, session = mock_db_session
+
+    payload = [_BASE_UPDATE]
+    with patch("web.main.subprocess.run", return_value=_make_proc(0)):
+        resp = await client.post("/api/generate", json=payload)
+
+    assert resp.status_code == 200
+
+    # Verify a Job was added to the session
+    from db.models import Job
+    add_calls = session.add.call_args_list
+    job_adds = [c for c in add_calls if isinstance(c[0][0], Job)]
+    assert len(job_adds) == 1
+    assert job_adds[0][0][0].status == "done"
+    assert job_adds[0][0][0].filename.endswith(".mp4")
+
+
+@pytest.mark.asyncio
+async def test_generate_failed_job_still_recorded(client, mock_db_session):
+    """Failed generate still creates a Job record with status 'failed'."""
+    _, session = mock_db_session
+
+    payload = [_BASE_UPDATE]
+    with patch(
+        "web.main.subprocess.run",
+        return_value=_make_proc(returncode=1, stderr="some error"),
+    ):
+        resp = await client.post("/api/generate", json=payload)
+
+    assert resp.status_code == 500
+
+    from db.models import Job
+    add_calls = session.add.call_args_list
+    job_adds = [c for c in add_calls if isinstance(c[0][0], Job)]
+    assert len(job_adds) == 1
+    assert job_adds[0][0][0].status == "failed"

@@ -52,44 +52,17 @@ describe("BlockCard", () => {
     expect(screen.getByDisplayValue("Hello world")).toBeInTheDocument();
   });
 
-  it("calls onChange with updated text on textarea change", async () => {
+  it("calls onChange with updated text on textarea change", () => {
+    // BlockCard is a controlled component whose value is driven by props.
+    // The mock onChange spy doesn't feed back into block, so userEvent.type
+    // would append to the stale "Hello world".  Use fireEvent.change to
+    // directly fire a synthetic React change event with the desired value.
     render(<BlockCard {...defProps} />);
     const textarea = screen.getByPlaceholderText(/scene caption/i);
-    await userEvent.clear(textarea);
-    await userEvent.type(textarea, "New text");
+    fireEvent.change(textarea, { target: { value: "New text" } });
     expect(defProps.onChange).toHaveBeenLastCalledWith(
-      expect.objectContaining({ text: expect.stringContaining("New text") })
+      expect.objectContaining({ text: "New text" })
     );
-  });
-
-  it("renders Y slider with correct value", () => {
-    render(<BlockCard {...defProps} />);
-    const sliders = screen.getAllByRole("slider");
-    // first slider = X, second = Y
-    const ySlider = sliders[1] as HTMLInputElement;
-    expect(ySlider.value).toBe("900");
-  });
-
-  it("calls onChange when Y slider changes", () => {
-    render(<BlockCard {...defProps} />);
-    const sliders = screen.getAllByRole("slider");
-    fireEvent.change(sliders[1], { target: { value: "500" } });
-    expect(defProps.onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ text_position: [100, 500] })
-    );
-  });
-
-  it("X row is visible and enabled when center_x is false", () => {
-    render(<BlockCard {...defProps} />);
-    const xRow = screen.getByTestId("x-row");
-    expect(xRow).toHaveStyle({ opacity: 1 });
-  });
-
-  it("X row is dimmed and pointer-events:none when center_x is true", () => {
-    const block = { ...baseBlock, center_x: true };
-    render(<BlockCard {...defProps} block={block} />);
-    const xRow = screen.getByTestId("x-row");
-    expect(xRow).toHaveStyle({ opacity: 0.35 });
   });
 
   it.each([

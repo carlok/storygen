@@ -48,4 +48,6 @@ FROM frontend-deps AS frontend-test
 
 COPY frontend/ .
 
-CMD ["npm", "test", "--", "--coverage", "--reporter=verbose", "--run"]
+# npm test already runs: vitest run --coverage
+# Only pass extra flags that aren't already in the script
+CMD ["npm", "test", "--", "--reporter=verbose"]

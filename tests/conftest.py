@@ -2,15 +2,13 @@
 
 Strategy
 --------
-- `client`       – async HTTP client; works in *both* personal and multi-user
-                   mode by overriding auth / DB dependencies when DATABASE_URL
-                   is set.
-- `admin_client` – same, but auth as an admin (multi-user only).
-- `multi_client` – same, but auth as a regular non-admin user (multi-user only).
+- `client`       – async HTTP client; auth / DB dependencies are always overridden
+                   so that no real PostgreSQL connection is required.
+- `multi_client` – same, but labelled explicitly as a regular non-admin user.
+- `admin_client` – same, but authenticated as an admin user.
 - Filesystem paths (CONFIG_PATH, OUTPUT_DIR) are always patched to tmp_path.
 
-When DATABASE_URL is not set  → personal mode; auth deps are no-ops in app.
-When DATABASE_URL is set      → multi-user mode; fixtures inject fake users.
+The app is always multi-user; there is no personal/single-user mode.
 """
 
 import json
@@ -27,20 +25,14 @@ from httpx import ASGITransport, AsyncClient
 # ── Set env vars BEFORE importing web.main ───────────────────────────────────
 os.environ.setdefault("SECRET_KEY", "test-secret-key-32chars-abcde-xyz0!")
 
-_MULTI_USER: bool = bool(os.environ.get("DATABASE_URL"))
-
 # ── Import app after env setup ────────────────────────────────────────────────
 from web.main import app  # noqa: E402
 
-# ── Convenience skip-markers ──────────────────────────────────────────────────
-multi_user_only = pytest.mark.skipif(
-    not _MULTI_USER,
-    reason="Requires DATABASE_URL pointing to a test PostgreSQL instance",
-)
-personal_only = pytest.mark.skipif(
-    _MULTI_USER,
-    reason="Personal-mode only (run without DATABASE_URL)",
-)
+# ── Always import auth/db deps (used to register dependency_overrides) ────────
+# Use bare-name imports to match what web/main.py imports, ensuring the same
+# function objects are used as keys in app.dependency_overrides.
+from auth import get_current_user, require_admin  # type: ignore[import]  # noqa: E402
+from db.engine import get_db  # type: ignore[import]  # noqa: E402
 
 
 # ── Sample config ─────────────────────────────────────────────────────────────
@@ -142,10 +134,15 @@ def mock_db_session():
 
 def _make_user(**kwargs):
     """
-    Build a fake ``web.db.models.User`` without hitting the DB.
-    Only available when _MULTI_USER is True (the import is inside that guard).
+    Build a fake user object that quacks like ``web.db.models.User``.
+
+    Uses SimpleNamespace instead of the real ORM class so that SQLAlchemy's
+    data descriptors never fire (they require a fully-initialized mapper state
+    that `User.__new__` alone does not set up).  The dependency overrides in
+    each fixture replace the real `get_current_user` / `require_admin` with
+    lambdas that return this object, so FastAPI never type-checks it.
     """
-    from web.db.models import User  # type: ignore[import]
+    from types import SimpleNamespace
 
     defaults = dict(
         id=uuid.uuid4(),
@@ -161,33 +158,43 @@ def _make_user(**kwargs):
         config=None,
     )
     defaults.update(kwargs)
-    u = User.__new__(User)
-    for k, v in defaults.items():
-        object.__setattr__(u, k, v)
-    return u
+    return SimpleNamespace(**defaults)
 
 
-# ── Core client (personal + multi-user compatible) ────────────────────────────
+# ── User fixtures ─────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def fake_user():
+    return _make_user()
+
+
+@pytest.fixture
+def fake_admin():
+    return _make_user(
+        google_sub="sub-admin",
+        email="admin@test.com",
+        display_name="Admin User",
+        is_admin=True,
+    )
+
+
+# ── Core client ───────────────────────────────────────────────────────────────
 
 @pytest_asyncio.fixture
 async def client(monkeypatch, config_file, output_dir, mock_db_session):
     """
-    Async HTTP client that patches filesystem paths and (in multi-user mode)
-    injects a regular fake user so that auth-protected endpoints work.
+    Async HTTP client that patches filesystem paths and injects a regular
+    fake user so that auth-protected endpoints work without a real DB.
     """
     import web.main as _main
 
     monkeypatch.setattr(_main, "CONFIG_PATH", config_file)
     monkeypatch.setattr(_main, "OUTPUT_DIR", output_dir)
 
-    if _MULTI_USER:
-        from web.auth import get_current_user
-        from web.db.engine import get_db
-
-        fake = _make_user()
-        get_db_override, _ = mock_db_session
-        app.dependency_overrides[get_current_user] = lambda: fake
-        app.dependency_overrides[get_db] = get_db_override
+    fake = _make_user()
+    get_db_override, _ = mock_db_session
+    app.dependency_overrides[get_current_user] = lambda: fake
+    app.dependency_overrides[get_db] = get_db_override
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
@@ -195,56 +202,40 @@ async def client(monkeypatch, config_file, output_dir, mock_db_session):
     app.dependency_overrides.clear()
 
 
-# ── Multi-user fixtures (multi_user_only tests) ───────────────────────────────
+# ── Named user clients ────────────────────────────────────────────────────────
 
-if _MULTI_USER:
-    from web.auth import get_current_user, require_admin  # noqa: E402
-    from web.db.engine import get_db  # noqa: E402
+@pytest_asyncio.fixture
+async def multi_client(monkeypatch, config_file, output_dir, fake_user, mock_db_session):
+    """Client authenticated as a non-admin user."""
+    import web.main as _main
 
-    @pytest.fixture
-    def fake_user():
-        return _make_user()
+    monkeypatch.setattr(_main, "CONFIG_PATH", config_file)
+    monkeypatch.setattr(_main, "OUTPUT_DIR", output_dir)
 
-    @pytest.fixture
-    def fake_admin():
-        return _make_user(
-            google_sub="sub-admin",
-            email="admin@test.com",
-            display_name="Admin User",
-            is_admin=True,
-        )
+    get_db_override, _ = mock_db_session
+    app.dependency_overrides[get_current_user] = lambda: fake_user
+    app.dependency_overrides[get_db] = get_db_override
 
-    @pytest_asyncio.fixture
-    async def multi_client(monkeypatch, config_file, output_dir, fake_user, mock_db_session):
-        """Client authenticated as a non-admin user."""
-        import web.main as _main
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        yield ac
 
-        monkeypatch.setattr(_main, "CONFIG_PATH", config_file)
-        monkeypatch.setattr(_main, "OUTPUT_DIR", output_dir)
+    app.dependency_overrides.clear()
 
-        get_db_override, _ = mock_db_session
-        app.dependency_overrides[get_current_user] = lambda: fake_user
-        app.dependency_overrides[get_db] = get_db_override
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            yield ac
+@pytest_asyncio.fixture
+async def admin_client(monkeypatch, config_file, output_dir, fake_admin, mock_db_session):
+    """Client authenticated as an admin user."""
+    import web.main as _main
 
-        app.dependency_overrides.clear()
+    monkeypatch.setattr(_main, "CONFIG_PATH", config_file)
+    monkeypatch.setattr(_main, "OUTPUT_DIR", output_dir)
 
-    @pytest_asyncio.fixture
-    async def admin_client(monkeypatch, config_file, output_dir, fake_admin, mock_db_session):
-        """Client authenticated as an admin user."""
-        import web.main as _main
+    get_db_override, _ = mock_db_session
+    app.dependency_overrides[get_current_user] = lambda: fake_admin
+    app.dependency_overrides[require_admin] = lambda: fake_admin
+    app.dependency_overrides[get_db] = get_db_override
 
-        monkeypatch.setattr(_main, "CONFIG_PATH", config_file)
-        monkeypatch.setattr(_main, "OUTPUT_DIR", output_dir)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        yield ac
 
-        get_db_override, _ = mock_db_session
-        app.dependency_overrides[get_current_user] = lambda: fake_admin
-        app.dependency_overrides[require_admin] = lambda: fake_admin
-        app.dependency_overrides[get_db] = get_db_override
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            yield ac
-
-        app.dependency_overrides.clear()
+    app.dependency_overrides.clear()

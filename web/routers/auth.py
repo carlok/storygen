@@ -1,7 +1,7 @@
 """Google OAuth2 routes: /auth/google, /auth/google/callback, /auth/logout."""
 import os
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,7 +23,11 @@ async def login_google(request: Request):
 
 
 @router.get("/google/callback")
-async def auth_callback(request: Request, db: AsyncSession = Depends(get_db)):
+async def auth_callback(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
     """Exchange the OAuth2 code, upsert the user, and set a session cookie."""
     token = await oauth.google.authorize_access_token(request)
     userinfo = token.get("userinfo") or await oauth.google.userinfo(token=token)
@@ -37,8 +41,9 @@ async def auth_callback(request: Request, db: AsyncSession = Depends(get_db)):
     # Upsert user
     result = await db.execute(select(User).where(User.google_sub == google_sub))
     user = result.scalar_one_or_none()
+    is_new_user = user is None
 
-    if user is None:
+    if is_new_user:
         user = User(
             google_sub=google_sub,
             email=email,
@@ -60,6 +65,15 @@ async def auth_callback(request: Request, db: AsyncSession = Depends(get_db)):
 
     await db.commit()
     await db.refresh(user)
+
+    # Notify admin of new sign-up (fire-and-forget, never blocks the redirect)
+    if is_new_user:
+        from main import _notify_admin  # local import avoids circular dep at module level
+        background_tasks.add_task(
+            _notify_admin,
+            f"[storygen] New user: {email}",
+            f"A new user signed up: {email} (display_name={display_name}).",
+        )
 
     response = RedirectResponse(url="/")
     response.set_cookie(

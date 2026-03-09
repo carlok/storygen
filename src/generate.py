@@ -103,7 +103,10 @@ def build_clip(block, cfg):
 
 
 def main():
-    cfg = load_config(CONFIG_PATH)
+    # argv[1] = output filename (optional, falls back to config prefix + timestamp)
+    # argv[2] = config file path (optional, falls back to /assets/config.json)
+    config_path = sys.argv[2] if len(sys.argv) > 2 else CONFIG_PATH
+    cfg = load_config(config_path)
 
     clips = []
     for block in cfg["blocks"]:

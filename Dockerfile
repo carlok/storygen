@@ -17,7 +17,6 @@ RUN pip install --no-cache-dir \
     "fastapi>=0.110.0" \
     "uvicorn[standard]>=0.27.0" \
     "pilmoji>=2.0.2" \
-    "resend>=2.0.0" \
     "authlib>=1.3.0" \
     "httpx>=0.27.0" \
     "itsdangerous>=2.1.0" \
@@ -50,6 +49,7 @@ RUN pip install --no-cache-dir \
 WORKDIR /workspace
 
 CMD ["pytest", "tests/", \
+     "--cov=/app", \
      "--cov=web", \
      "--cov-report=term-missing", \
      "--cov-report=html:coverage/backend", \

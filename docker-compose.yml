@@ -12,7 +12,7 @@ services:
       - ./assets:/assets
       - ./output:/output
 
-  # ── Web: FastAPI backend (personal + multi-user) ──────────────────────────────
+  # ── Web: FastAPI backend (always multi-user) ──────────────────────────────────
   web:
     build:
       context: .
@@ -24,8 +24,6 @@ services:
     env_file: .env
     environment:
       # Force polling-based file watcher so --reload works on macOS+Podman.
-      # Podman runs in a Linux VM; inotify events from the macOS host never
-      # reach the container, so watchfiles needs polling to detect changes.
       WATCHFILES_FORCE_POLLING: "true"
     volumes:
       - ./web:/app
@@ -33,7 +31,9 @@ services:
       - ./assets:/assets
       - ./output:/output
       - storygen_storage:/storage
-    # depends_on: db  ← uncomment when running with --profile multi-user
+    depends_on:
+      db:
+        condition: service_healthy
 
   # ── Frontend dev server (Vite HMR, proxies /api and /auth to web) ─────────────
   #   podman compose --profile dev up frontend-dev
@@ -64,13 +64,12 @@ services:
       - .:/workspace           # workspace root so ../web/static resolves correctly
 
   # ── DB migrations (run once after first 'up', or after schema changes) ────────
-  #   podman compose --profile multi-user run --rm migrate
+  #   podman compose run --rm migrate
   migrate:
     build:
       context: .
       dockerfile: Dockerfile
       target: backend-base
-    profiles: [multi-user]
     command: alembic upgrade head
     env_file: .env
     volumes:
@@ -80,14 +79,13 @@ services:
       db:
         condition: service_healthy
 
-  # ── Production DB (multi-user mode) ──────────────────────────────────────────
+  # ── Production DB ─────────────────────────────────────────────────────────────
   db:
     image: postgres:16-alpine
-    profiles: [multi-user]
     environment:
       POSTGRES_DB: storygen
       POSTGRES_USER: storygen
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-storygen}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -110,7 +108,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Backend tests (pytest + coverage, multi-user mode against db-test) ─────────
+  # ── Backend tests (pytest + coverage, against db-test) ────────────────────────
   backend-test:
     build:
       context: .
@@ -121,8 +119,13 @@ services:
       DATABASE_URL: postgresql+asyncpg://storygen:storygen_test@db-test/storygen_test
       SECRET_KEY: test-secret-key-32chars-abcde-xyz0!
       ADMIN_EMAIL: ""
-      RESEND_API_KEY: ""
-      RESEND_FROM: ""
+      SMTP_HOST: ""
+      SMTP_PORT: "587"
+      SMTP_USER: ""
+      SMTP_PASSWORD: ""
+      SMTP_FROM: ""
+      DAILY_VIDEO_LIMIT: "3"
+      PYTHONPATH: /app
     volumes:
       - .:/workspace           # workspace root (pytest discovers tests/ and web/)
       - ./web:/app

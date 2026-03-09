@@ -2,7 +2,7 @@
 
 > Compose short MP4 videos from static images with text overlays — entirely inside a container, no installs on the host.
 
-A personal (or multi-user) daily-video tool: load your photos, write captions in the browser, hit Generate, download or email the result. All your files live on the host via volume mounts — the container is a pure, reproducible environment.
+A multi-user daily-video tool: load your photos, write captions in the browser, hit Generate, download or email the result. All your files live on the host via volume mounts — the container is a pure, reproducible environment.
 
 ---
 
@@ -18,7 +18,7 @@ storygen/
 ├── src/
 │   └── generate.py              # video pipeline (Pillow · pilmoji · moviepy)
 ├── web/
-│   ├── main.py                  # FastAPI app (personal + multi-user modes)
+│   ├── main.py                  # FastAPI app (always multi-user)
 │   ├── auth.py                  # Google OAuth2 + signed session cookie
 │   ├── db/
 │   │   ├── engine.py            # async SQLAlchemy engine
@@ -61,45 +61,18 @@ storygen/
 | Profile | Service | What it does |
 |---------|---------|--------------|
 | *(default)* | `web` | FastAPI backend on port 8000 |
+| *(default)* | `db` | Production PostgreSQL |
+| *(no profile)* | `migrate` | Run Alembic migrations |
 | `cli` | `app` | One-shot video generation (no web UI) |
 | `dev` | `frontend-dev` | Vite HMR dev server on port 5173 |
 | `build` | `frontend-build` | Compiles React app → `web/static/` |
-| `multi-user` | `db` | Production PostgreSQL |
 | `test` | `db-test` | Ephemeral test PostgreSQL |
 | `test` | `backend-test` | pytest + coverage |
 | `test` | `frontend-test` | vitest + coverage |
 
 ---
 
-## First-time setup — personal mode
-
-```bash
-# 1. Clone
-git clone https://github.com/carlok/storygen.git && cd storygen
-
-# 2. Build the backend image
-podman compose build
-
-# 3. Configure secrets
-cp .env.example .env
-# → edit .env: fill in RESEND_API_KEY and RESEND_FROM
-
-# 4. Create your config
-cp assets/config.json.example assets/config.json
-# → edit config.json: image filenames, durations, captions
-
-# 5. Drop media in place
-cp ~/photos/*.jpg assets/images/
-cp ~/music/track.mp3 assets/music/
-
-# 6. Start
-podman compose up web
-# Open http://localhost:8000
-```
-
----
-
-## Multi-user setup
+## Getting started
 
 ### Step 1 — Generate a secret key
 
@@ -159,10 +132,10 @@ Click **Create**. A dialog shows your **Client ID** (ends in `.apps.googleuserco
 cp .env.example .env
 ```
 
-Uncomment and fill in the multi-user block:
+Fill in all required values:
 
 ```dotenv
-SECRET_KEY=<output of step 1>
+SECRET_KEY=<64-char hex from step 1>
 
 GOOGLE_CLIENT_ID=xxxxxxxxxxxx.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=GOCSPX-xxxxxxxxxxxx
@@ -172,13 +145,21 @@ GOOGLE_CLIENT_SECRET=GOCSPX-xxxxxxxxxxxx
 # OAUTH_REDIRECT_URI=http://localhost:8000/auth/google/callback
 
 DATABASE_URL=postgresql+asyncpg://storygen:yourpassword@db/storygen
-POSTGRES_PASSWORD=yourpassword
+POSTGRES_PASSWORD=yourpassword        # no default — must be set
 
 # This account is promoted to admin automatically on first login.
 ADMIN_EMAIL=you@yourdomain.com
 
+SMTP_HOST=smtp.yourdomain.com
+SMTP_PORT=587
+SMTP_USER=you@yourdomain.com
+SMTP_PASSWORD=yoursmtppassword
+SMTP_FROM=noreply@yourdomain.com
+
+DAILY_VIDEO_LIMIT=3                   # videos per user per day
+
 # Set to false when testing locally over plain HTTP.
-SECURE_COOKIES=false
+# SECURE_COOKIES=false
 ```
 
 ---
@@ -186,11 +167,21 @@ SECURE_COOKIES=false
 ### Step 4 — Start and migrate
 
 ```bash
-# Start backend + PostgreSQL
-podman compose --profile multi-user up web db -d
+# Build images
+podman compose build
 
-# Run migrations (first time, or after schema changes)
-podman compose exec web alembic upgrade head
+# Start the database (web depends on it automatically)
+podman compose up -d db
+
+# Run migrations (once after first clone, then after schema changes)
+podman compose run --rm migrate
+
+# Build the frontend bundle (outputs to web/static/)
+podman compose --profile build run --rm frontend-build
+
+# Start the web service
+podman compose up -d web
+# Open http://localhost:8000
 ```
 
 Open **http://localhost:8000** → click **Sign in with Google** → the `ADMIN_EMAIL` account is promoted to admin automatically on first login.
@@ -247,8 +238,8 @@ FastAPI's `StaticFiles(html=True)` mount serves the built React app automaticall
 pip install pytest pytest-asyncio httpx pytest-cov
 pytest --cov=web --cov-report=term-missing
 
-# containerised (multi-user mode against ephemeral PostgreSQL)
-podman compose --profile test up backend-test db-test --abort-on-container-exit
+# containerised (against ephemeral PostgreSQL)
+podman compose --profile test run --build --rm backend-test
 ```
 
 ### Frontend
@@ -258,13 +249,14 @@ podman compose --profile test up backend-test db-test --abort-on-container-exit
 cd frontend && npm test -- --coverage
 
 # containerised (source baked into image for deterministic CI)
-podman compose --profile test up frontend-test --abort-on-container-exit
+podman compose --profile test run --rm frontend-test
 ```
 
-### Both at once
+### Both
 
 ```bash
-podman compose --profile test up --abort-on-container-exit
+podman compose --profile test run --build --rm backend-test
+podman compose --profile test run --rm frontend-test
 # Coverage reports:
 #   coverage/backend/   (HTML — pytest-cov)
 #   coverage/frontend/  (HTML — @vitest/coverage-v8)
@@ -306,34 +298,51 @@ Music shorter than total video duration is looped automatically.
 
 - **Tab per block** — switch between scenes without scrolling
 - **Live canvas preview** — see the text pill on the actual image; drag to reposition
-- **X / Y sliders** — fine-tune position numerically
 - **Toggles** per block: Align center · Center X · B&W · Fade in · Fade out
-- **Generate Video** — modal spinner while rendering (~10–60 s)
+- **Generate Video** — modal spinner while rendering (~10–60 s); each user is limited to `DAILY_VIDEO_LIMIT` (default 3) videos per day
 - **Download Video** — direct link to the rendered MP4
-- **Send Video** — email the MP4 via Resend
-- **Admin panel** *(multi-user only)* — user management and usage stats at `/admin`
+- **Send Video** — email the MP4 via SMTP
+- **Admin panel** — user management and usage stats at `/admin`
 
 ---
 
-## Email setup (Resend)
+## Email setup (SMTP)
 
-1. Create a free account at [resend.com](https://resend.com)
-2. Add and verify your sending domain (or use `onboarding@resend.dev` for testing)
-3. Generate an API key
-4. Set `RESEND_API_KEY` and `RESEND_FROM` in `.env`
+The "Send Video" button emails the rendered MP4 as an attachment using plain SMTP
+(stdlib `smtplib`, STARTTLS on port 587 — no third-party SDK required).
 
-> Attachment size limits apply (~10 MB). Use the Download link for longer videos.
+Set these variables in `.env`:
+
+| Variable | Example | Description |
+|----------|---------|-------------|
+| `SMTP_HOST` | `smtp.gmail.com` | Outbound SMTP server |
+| `SMTP_PORT` | `587` | Port (STARTTLS) |
+| `SMTP_USER` | `you@gmail.com` | Login username |
+| `SMTP_PASSWORD` | `app-password` | Login password / app password |
+| `SMTP_FROM` | `noreply@yourdomain.com` | Envelope From address |
+
+**Gmail:** generate an [App Password](https://myaccount.google.com/apppasswords)
+(requires 2-Step Verification). Use `smtp.gmail.com`, port `587`, your full Gmail
+address as `SMTP_USER`, the app password as `SMTP_PASSWORD`.
+
+**Local dev / testing:** point at [Mailpit](https://mailpit.axllent.org/) or
+[Mailhog](https://github.com/mailhog/MailHog) (`SMTP_HOST=localhost`, `SMTP_PORT=1025`,
+leave `SMTP_USER` and `SMTP_PASSWORD` empty) — no authentication required.
+
+> Attachment size depends on your SMTP provider (typically 10–25 MB).
+> Use the **Download Video** link for larger files.
 
 ---
 
 ## Daily workflow
 
-1. `podman compose up web`
+1. `podman compose up -d web`
 2. Open **http://localhost:8000**
-3. Edit captions in each block tab
-4. Drag text on the canvas preview to reposition
-5. Click **Generate Video** — wait for the modal to clear
-6. Click **Download Video** — or enter an email and click **Send Video**
+3. Sign in with Google
+4. Edit captions in each block tab
+5. Drag text on the canvas preview to reposition
+6. Click **Generate Video** — wait for the modal to clear
+7. Click **Download Video** — or enter an email and click **Send Video**
 
 ---
 
@@ -348,6 +357,6 @@ Music shorter than total video duration is looped automatically.
 | Auth | authlib (Google OAuth2) + itsdangerous (signed cookie) |
 | Database | PostgreSQL 16 + SQLAlchemy async + Alembic |
 | Frontend | React 18, Vite, TypeScript, React Router |
-| Email | Resend API |
+| Email | smtplib (stdlib · STARTTLS) |
 | Backend tests | pytest, pytest-asyncio, httpx, pytest-cov |
 | Frontend tests | vitest, @testing-library/react, @vitest/coverage-v8 |

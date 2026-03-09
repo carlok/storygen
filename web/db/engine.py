@@ -3,10 +3,12 @@ import os
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
 
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql+asyncpg://storygen:storygen@db/storygen",
-)
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL env var is required.\n"
+        "Example: postgresql+asyncpg://storygen:password@db/storygen"
+    )
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 

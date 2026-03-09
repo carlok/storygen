@@ -6,16 +6,15 @@ import { LoginPage } from "@/pages/LoginPage";
 import { AdminPage } from "@/pages/AdminPage";
 
 /**
- * Wraps a route that requires authentication in multi-user mode.
- * - Personal mode (isMultiUser=false): renders children directly, no auth needed.
- * - Multi-user, logged in: renders children.
- * - Multi-user, not logged in: redirects to /login.
- * - Still loading: renders nothing (avoids flash).
+ * Wraps routes that require an authenticated user.
+ * - Loading: renders nothing (avoids flash).
+ * - Not logged in: redirects to /login.
+ * - Logged in: renders children.
  */
 function ProtectedRoute({ children }: { children: ReactNode }) {
-  const { me, loading, isMultiUser } = useAuth();
+  const { me, loading } = useAuth();
   if (loading) return null;
-  if (isMultiUser && !me) return <Navigate to="/login" replace />;
+  if (!me) return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
 

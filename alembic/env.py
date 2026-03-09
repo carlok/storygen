@@ -8,10 +8,12 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from alembic import context
 
 # Pull DATABASE_URL from environment (overrides alembic.ini value)
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql+asyncpg://storygen:storygen@db/storygen",
-)
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL env var is required. "
+        "Example: postgresql+asyncpg://storygen:password@db/storygen"
+    )
 
 # Alembic Config object
 config = context.config
