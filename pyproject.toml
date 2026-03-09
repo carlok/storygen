@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.backends.legacy:build"
+
+# ── pytest ────────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+asyncio_mode   = "auto"
+testpaths      = ["tests"]
+python_files   = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+# Fail fast on first error during collection
+addopts = [
+  "--tb=short",
+  "--strict-markers",
+]
+
+markers = [
+  "asyncio: mark test as async",
+]
+
+# ── Coverage ──────────────────────────────────────────────────────────────────
+[tool.coverage.run]
+# Use /app (the PYTHONPATH root) as the coverage source so that bare imports
+# like `from auth import …` and package imports like `web.auth` are resolved
+# to the same physical files.  Bare imports via PYTHONPATH always win over
+# the /workspace/web/ path in coverage's __file__ tracking.
+source   = ["/app"]
+branch   = true
+omit     = [
+  "/app/static/*",
+  "/app/db/engine.py",   # thin glue, tested indirectly
+  "/app/alembic/*",
+]
+
+# Normalise /app/ → web/ so the terminal report shows the familiar paths.
+[tool.coverage.paths]
+source = [
+  "web/",
+  "/app/",
+]
+
+[tool.coverage.report]
+show_missing   = true
+skip_covered   = false
+fail_under     = 60          # raise threshold as coverage grows
+
+[tool.coverage.html]
+directory = "coverage/backend"
