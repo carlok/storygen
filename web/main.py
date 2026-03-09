@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -14,11 +15,11 @@ from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Annotated, List
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -91,9 +92,8 @@ def _smtp_send(
 ) -> None:
     """Send an email via stdlib smtplib (STARTTLS on port 587).
 
-    Raises HTTPException(500) when SMTP is not configured so callers in request
-    context get a clean error.  Call sites in background tasks should wrap it
-    themselves (see _notify_admin).
+    Raises RuntimeError when SMTP is not configured.  Callers in a request
+    context should convert this to HTTPException; background callers log it.
     """
     host      = os.environ.get("SMTP_HOST", "")
     port      = int(os.environ.get("SMTP_PORT", "587"))
@@ -101,7 +101,7 @@ def _smtp_send(
     password  = os.environ.get("SMTP_PASSWORD", "")
     from_addr = os.environ.get("SMTP_FROM", "")
     if not host or not from_addr:
-        raise HTTPException(500, "SMTP not configured — set SMTP_HOST and SMTP_FROM env vars")
+        raise RuntimeError("SMTP not configured — set SMTP_HOST and SMTP_FROM env vars")
 
     msg = MIMEMultipart()
     msg["From"]    = from_addr
@@ -121,6 +121,11 @@ def _smtp_send(
         if user and password:
             srv.login(user, password)
         srv.send_message(msg)
+
+
+def _smtp_configured() -> bool:
+    """Return True if the minimum SMTP vars are present."""
+    return bool(os.environ.get("SMTP_HOST")) and bool(os.environ.get("SMTP_FROM"))
 
 
 def _notify_admin(subject: str, body: str) -> None:
@@ -157,6 +162,76 @@ async def _get_user_config(db: AsyncSession, user_id) -> Config:
         await db.commit()
         await db.refresh(cfg_row)
     return cfg_row
+
+
+# ── Background video generation task ──────────────────────────────────────────
+
+async def _run_generate_and_email(
+    user_id: str,
+    user_email: str,
+    filename: str,
+    tmp_path: str,
+    job_id: str,
+) -> None:
+    """Background task: run generate.py, update the Job row, then email the result.
+
+    Uses asyncio.to_thread so the blocking subprocess never stalls the event loop.
+    Opens its own DB session (cannot reuse the request-scoped session).
+    """
+    status    = "failed"
+    error_msg = "unknown"
+    try:
+        result = await asyncio.to_thread(
+            subprocess.run,
+            [sys.executable, str(GENERATE_SCRIPT), filename, tmp_path],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if result.returncode == 0:
+            status    = "done"
+            error_msg = None
+        else:
+            error_msg = result.stderr[:512]
+            _log.error("generate.py failed for user %s: %s", user_id, result.stderr)
+    except subprocess.TimeoutExpired:
+        error_msg = "timeout"
+        _log.error("generate.py timed out for user %s", user_id)
+    except Exception as exc:
+        error_msg = str(exc)[:512]
+        _log.error("unexpected error in _run_generate_and_email for user %s: %s", user_id, exc)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+    # ── Update job row ──────────────────────────────────────────────────────────
+    try:
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                sa_update(Job)
+                .where(Job.id == job_id)
+                .values(status=status, error=error_msg)
+            )
+            await db.commit()
+    except Exception as exc:
+        _log.error("failed to update job %s: %s", job_id, exc)
+
+    # ── Send email on success ───────────────────────────────────────────────────
+    if status == "done":
+        try:
+            _smtp_send(
+                user_email,
+                "Your story video is ready",
+                "Your video has been generated and is attached to this email.",
+                attachment=OUTPUT_DIR / filename,
+            )
+        except Exception as exc:
+            _log.error("email failed for user %s after generation: %s", user_id, exc)
+
+        # Admin notification (fire-and-forget)
+        _notify_admin(
+            f"[storygen] New video by {user_email}: {filename}",
+            f"User {user_email} (id={user_id}) generated video '{filename}'.",
+        )
 
 
 # ── Core API routes ────────────────────────────────────────────────────────────
@@ -217,6 +292,10 @@ async def generate(
     _auth: User = Depends(_auth_dep),
     db: AsyncSession = Depends(get_db),
 ):
+    # ── SMTP pre-flight check — fail fast before queuing ──────────────────────
+    if not _smtp_configured():
+        raise HTTPException(500, "Email delivery not configured — contact the administrator")
+
     # ── Daily limit check ──────────────────────────────────────────────────────
     today_start = datetime.combine(date.today(), datetime.min.time()).replace(
         tzinfo=timezone.utc
@@ -264,46 +343,28 @@ async def generate(
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     filename = f"{prefix}_{timestamp}.mp4"
 
-    # ── Write per-user temp config and run subprocess ─────────────────────────
-    # Use tempfile.mkstemp for a file with restricted permissions (0o600 by default)
-    # instead of a predictable path under the world-readable /tmp directory.
+    # ── Write temp config — background task owns cleanup ─────────────────────
     tmp_fd, tmp_path = tempfile.mkstemp(prefix="storygen_", suffix=".json")
-    tmp_config = Path(tmp_path)
-    try:
-        with os.fdopen(tmp_fd, "w") as tmp_file:
-            json.dump(cfg, tmp_file)
-        result = subprocess.run(
-            [sys.executable, str(GENERATE_SCRIPT), filename, tmp_path],
-            capture_output=True,
-            text=True,
-            timeout=300,  # 5-minute hard cap — prevents runaway processes
-        )
-    except subprocess.TimeoutExpired:
-        _log.error("generate.py timed out for user %s", _auth.id)
-        db.add(Job(user_id=_auth.id, filename=filename, status="failed", error="timeout"))
-        await db.commit()
-        raise HTTPException(504, "Video generation timed out")
-    finally:
-        tmp_config.unlink(missing_ok=True)
+    with os.fdopen(tmp_fd, "w") as tmp_file:
+        json.dump(cfg, tmp_file)
 
-    # ── Record Job (success or failure counts toward daily limit) ──────────────
-    status    = "done" if result.returncode == 0 else "failed"
-    error_msg = result.stderr[:512] if result.returncode != 0 else None
-    db.add(Job(user_id=_auth.id, filename=filename, status=status, error=error_msg))
+    # ── Insert pending Job (counts toward daily limit immediately) ────────────
+    job = Job(user_id=_auth.id, filename=filename, status="pending")
+    db.add(job)
     await db.commit()
+    await db.refresh(job)
 
-    if result.returncode != 0:
-        _log.error("generate.py failed for user %s: %s", _auth.id, result.stderr)
-        raise HTTPException(500, "Video generation failed")
-
-    # ── Admin notification ─────────────────────────────────────────────────────
+    # ── Queue background task and return immediately ───────────────────────────
     background_tasks.add_task(
-        _notify_admin,
-        f"[storygen] New video by {_auth.email}: {filename}",
-        f"User {_auth.email} (id={_auth.id}) generated video '{filename}'.",
+        _run_generate_and_email,
+        str(_auth.id),
+        _auth.email,
+        filename,
+        tmp_path,
+        str(job.id),
     )
 
-    return {"status": "ok", "filename": filename}
+    return {"status": "queued"}
 
 
 @app.get("/api/image/{filename}")
@@ -314,58 +375,6 @@ def get_image(filename: str, _auth: User = Depends(_auth_dep)):
     if not image_path.exists():
         raise HTTPException(404, "Image not found")
     return FileResponse(path=str(image_path))
-
-
-@app.get("/api/video")
-def get_video(
-    name: str = Query(..., description="Filename returned by /api/generate"),
-    _auth: User = Depends(_auth_dep),
-):
-    try:
-        video_path = (OUTPUT_DIR / name).resolve()
-    except Exception:
-        raise HTTPException(400, "Invalid filename")
-    output_root = str(OUTPUT_DIR.resolve()) + os.sep
-    if not str(video_path).startswith(output_root):
-        raise HTTPException(400, "Invalid filename")
-    if not video_path.exists() or video_path.suffix != ".mp4":
-        raise HTTPException(404, "Video not found")
-    return FileResponse(path=str(video_path), media_type="video/mp4", filename=name)
-
-
-class EmailRequest(BaseModel):
-    to: str
-    filename: str
-
-
-@app.post("/api/send-email")
-def send_email(req: EmailRequest, _auth: User = Depends(_auth_dep)):
-    if _auth.email != req.to:
-        raise HTTPException(403, "You can only send to your own email address")
-
-    try:
-        video_path = (OUTPUT_DIR / req.filename).resolve()
-    except Exception:
-        raise HTTPException(400, "Invalid filename")
-    output_root = str(OUTPUT_DIR.resolve()) + os.sep
-    if not str(video_path).startswith(output_root):
-        raise HTTPException(400, "Invalid filename")
-    if not video_path.exists() or video_path.suffix != ".mp4":
-        raise HTTPException(404, "Video not found")
-
-    try:
-        _smtp_send(
-            req.to,
-            f"Generated video: {req.filename}",
-            "Your story video is attached.",
-            attachment=video_path,
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        _log.error("send_email failed for user %s: %s", _auth.id, exc)
-        raise HTTPException(500, "Email delivery failed") from exc
-    return {"status": "ok"}
 
 
 # ── Health check ──────────────────────────────────────────────────────────────
@@ -404,10 +413,9 @@ async def promote_initial_admin():
     if not admin_email:
         return
     try:
-        from sqlalchemy import update
         async with AsyncSessionLocal() as db:
             await db.execute(
-                update(User).where(User.email == admin_email).values(is_admin=True)
+                sa_update(User).where(User.email == admin_email).values(is_admin=True)
             )
             await db.commit()
     except Exception as exc:

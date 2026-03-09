@@ -10,8 +10,3 @@ export const generateVideo = (updates: BlockUpdate[]): Promise<GenerateResponse>
     body: JSON.stringify(updates),
   });
 
-export const sendEmail = (to: string, filename: string): Promise<void> =>
-  apiFetch<void>("/api/send-email", {
-    method: "POST",
-    body: JSON.stringify({ to, filename }),
-  });

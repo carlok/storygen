@@ -28,3 +28,5 @@ coverage/
 
 # Vite build output (rebuilt by `frontend-build` service)
 web/static/assets/
+
+TODO.md

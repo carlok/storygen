@@ -34,7 +34,6 @@ export interface BlockUpdate {
 
 export interface GenerateResponse {
   status: string;
-  filename: string;
 }
 
 export interface Me {
