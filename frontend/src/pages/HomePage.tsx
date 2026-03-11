@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useVideo } from "@/context/VideoContext";
 import { useAuth } from "@/context/AuthContext";
 import { BlockTabs } from "@/features/blocks/BlockTabs";
@@ -17,6 +17,24 @@ export function HomePage() {
   const [activeIndex, setActiveIndex] = useState(0);
   const [generating, setGenerating]   = useState(false);
   const [status, setStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  // Auto-dismiss success message after 4 s
+  useEffect(() => {
+    if (status?.type !== "success") return;
+    const id = setTimeout(() => setStatus(null), 4000);
+    return () => clearTimeout(id);
+  }, [status]);
+
+  // Ctrl+Enter (or Cmd+Enter on Mac) triggers generate
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !generating) {
+        handleGenerate();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [generating]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateBlock = (updated: Block) =>
     setBlocks((prev) => prev.map((b) => (b.index === updated.index ? updated : b)));
