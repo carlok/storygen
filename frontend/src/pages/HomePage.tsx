@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useVideo } from "@/context/VideoContext";
 import { useAuth } from "@/context/AuthContext";
 import { BlockTabs } from "@/features/blocks/BlockTabs";
@@ -25,21 +25,7 @@ export function HomePage() {
     return () => clearTimeout(id);
   }, [status]);
 
-  // Ctrl+Enter (or Cmd+Enter on Mac) triggers generate
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !generating) {
-        handleGenerate();
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [generating]);  // eslint-disable-line react-hooks/exhaustive-deps
-
-  const updateBlock = (updated: Block) =>
-    setBlocks((prev) => prev.map((b) => (b.index === updated.index ? updated : b)));
-
-  const handleGenerate = async () => {
+  const handleGenerate = useCallback(async () => {
     setGenerating(true);
     setStatus(null);
     try {
@@ -61,7 +47,21 @@ export function HomePage() {
     } finally {
       setGenerating(false);
     }
-  };
+  }, [blocks, me]);  // setGenerating and setStatus are stable setState functions
+
+  // Ctrl+Enter (or Cmd+Enter on Mac) triggers generate
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !generating) {
+        handleGenerate();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [generating, handleGenerate]);
+
+  const updateBlock = (updated: Block) =>
+    setBlocks((prev) => prev.map((b) => (b.index === updated.index ? updated : b)));
 
   return (
     <>
