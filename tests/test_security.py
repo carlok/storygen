@@ -24,9 +24,14 @@ async def test_csp_allows_google_avatars(client):
 
 async def test_image_path_traversal_rejected(client):
     resp = await client.get("/api/image/../../../etc/passwd")
-    assert resp.status_code in (400, 404)
+    assert resp.status_code == 400
 
 
 async def test_image_path_traversal_dotdot_rejected(client):
     resp = await client.get("/api/image/..%2F..%2Fetc%2Fpasswd")
-    assert resp.status_code in (400, 404)
+    assert resp.status_code == 400
+
+
+async def test_csp_allows_self_connect(client):
+    csp = (await client.get("/health")).headers["content-security-policy"]
+    assert "connect-src 'self'" in csp

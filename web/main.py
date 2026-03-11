@@ -7,6 +7,7 @@ import smtplib
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 from datetime import date, datetime, timezone
 from email import encoders
 from email.mime.base import MIMEBase
@@ -71,10 +72,25 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         raw_path: bytes = request.scope.get("raw_path", b"") or b""
         decoded_path: str = request.scope.get("path", "") or ""
         if _TRAVERSAL_RAW_RE.search(raw_path):
+            _log.warning(
+                "path traversal blocked: raw=%s client=%s",
+                request.url.path,
+                getattr(request.client, "host", "unknown"),
+            )
             return JSONResponse({"detail": "Invalid path"}, status_code=400)
         if _TRAVERSAL_SEG_RE.search(decoded_path):
+            _log.warning(
+                "path traversal blocked: raw=%s client=%s",
+                request.url.path,
+                getattr(request.client, "host", "unknown"),
+            )
             return JSONResponse({"detail": "Invalid path"}, status_code=400)
         if _UNIX_SYSROOT_RE.match(decoded_path):
+            _log.warning(
+                "path traversal blocked: raw=%s client=%s",
+                request.url.path,
+                getattr(request.client, "host", "unknown"),
+            )
             return JSONResponse({"detail": "Invalid path"}, status_code=400)
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -401,7 +417,6 @@ async def generate(
 
 @app.get("/api/image/{filename}")
 def get_image(filename: str, _auth: User = Depends(_auth_dep)):
-    import urllib.parse
     _images_root = Path("/assets/images").resolve()
     # URL-decode first so that %2F-encoded slashes are also caught by resolve()
     decoded = urllib.parse.unquote(filename)
