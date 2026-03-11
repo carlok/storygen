@@ -38,8 +38,9 @@ async def test_csp_allows_self_connect(client):
 
 
 async def test_gzip_compresses_json_response(client):
-    """API responses should be gzip-compressed when the client requests it."""
-    resp = await client.get("/health", headers={"Accept-Encoding": "gzip"})
+    """API responses over 500 bytes should be gzip-compressed when requested."""
+    resp = await client.get("/api/blocks", headers={"Accept-Encoding": "gzip"})
+    assert resp.status_code == 200
     assert resp.headers.get("content-encoding") == "gzip"
 
 
