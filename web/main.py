@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Annotated, List
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
@@ -116,9 +117,23 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
-# SessionMiddleware is required for OAuth state CSRF protection.
-app.add_middleware(SecurityHeadersMiddleware)
-app.add_middleware(SessionMiddleware, secret_key=_SECRET_KEY)
+class StaticCacheMiddleware(BaseHTTPMiddleware):
+    """Add long-lived immutable cache headers to Vite's hashed asset bundles."""
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        response = await call_next(request)
+        if request.url.path.startswith("/assets/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
+# Middleware order: innermost (first added) → outermost (last added).
+# Request flows outermost→innermost; response flows innermost→outermost.
+# GZip is outermost so it compresses the fully-formed response last.
+app.add_middleware(SecurityHeadersMiddleware)              # sets security + CSP headers
+app.add_middleware(StaticCacheMiddleware)                  # immutable cache for /assets/*
+app.add_middleware(SessionMiddleware, secret_key=_SECRET_KEY)  # OAuth CSRF state
+app.add_middleware(GZipMiddleware, minimum_size=500)       # outermost: compress response
 
 app.include_router(auth_router)
 app.include_router(admin_router)

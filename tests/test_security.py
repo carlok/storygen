@@ -35,3 +35,16 @@ async def test_image_path_traversal_dotdot_rejected(client):
 async def test_csp_allows_self_connect(client):
     csp = (await client.get("/health")).headers["content-security-policy"]
     assert "connect-src 'self'" in csp
+
+
+async def test_gzip_compresses_json_response(client):
+    """API responses should be gzip-compressed when the client requests it."""
+    resp = await client.get("/health", headers={"Accept-Encoding": "gzip"})
+    assert resp.headers.get("content-encoding") == "gzip"
+
+
+async def test_health_not_cached(client):
+    """Non-asset responses must not get the immutable cache header."""
+    resp = await client.get("/health")
+    cc = resp.headers.get("cache-control", "")
+    assert "immutable" not in cc
