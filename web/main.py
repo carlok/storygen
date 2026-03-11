@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Annotated, List
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select, update as sa_update
@@ -53,8 +53,29 @@ if not _SECRET_KEY or _SECRET_KEY == "change-me":
     )
 
 # ── Security headers middleware ─────────────────────────────────────────────────
+# Matches literal ".." and any percent-encoding of ".." (%2e%2e, %2E%2E, etc.)
+_TRAVERSAL_RAW_RE = re.compile(rb"(\.\.|%2e%2e)", re.IGNORECASE)
+# Matches decoded paths whose segments include ".." or resolved system directory roots
+# that are never valid web-app routes (guards against client-normalized traversal).
+_TRAVERSAL_SEG_RE = re.compile(r"(^|/)\.\.(/|$)")
+_UNIX_SYSROOT_RE = re.compile(
+    r"^/(etc|usr|var|proc|sys|home|root|bin|sbin|lib|tmp|dev|mnt|media|run|srv|boot|opt)(/|$)"
+)
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
+        # Reject requests whose raw path contains traversal sequences (literal or
+        # percent-encoded), or whose decoded path resolves into Unix system roots
+        # that can only arrive via client-normalized traversal.
+        raw_path: bytes = request.scope.get("raw_path", b"") or b""
+        decoded_path: str = request.scope.get("path", "") or ""
+        if _TRAVERSAL_RAW_RE.search(raw_path):
+            return JSONResponse({"detail": "Invalid path"}, status_code=400)
+        if _TRAVERSAL_SEG_RE.search(decoded_path):
+            return JSONResponse({"detail": "Invalid path"}, status_code=400)
+        if _UNIX_SYSROOT_RE.match(decoded_path):
+            return JSONResponse({"detail": "Invalid path"}, status_code=400)
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
@@ -65,6 +86,17 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers["Strict-Transport-Security"] = (
                 "max-age=31536000; includeSubDomains"
             )
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self'; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "img-src 'self' data: https://lh3.googleusercontent.com; "
+            "connect-src 'self'; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self';"
+        )
         return response
 
 
@@ -369,12 +401,19 @@ async def generate(
 
 @app.get("/api/image/{filename}")
 def get_image(filename: str, _auth: User = Depends(_auth_dep)):
-    if "/" in filename or "\\" in filename or ".." in filename:
+    import urllib.parse
+    _images_root = Path("/assets/images").resolve()
+    # URL-decode first so that %2F-encoded slashes are also caught by resolve()
+    decoded = urllib.parse.unquote(filename)
+    try:
+        safe = (_images_root / decoded).resolve()
+    except Exception:
         raise HTTPException(400, "Invalid filename")
-    image_path = Path("/assets/images") / filename
-    if not image_path.exists():
+    if not safe.is_relative_to(_images_root):
+        raise HTTPException(400, "Invalid filename")
+    if not safe.exists():
         raise HTTPException(404, "Image not found")
-    return FileResponse(path=str(image_path))
+    return FileResponse(path=str(safe))
 
 
 # ── Health check ──────────────────────────────────────────────────────────────
@@ -435,4 +474,4 @@ if _ASSETS_DIR.exists():
 async def spa_fallback(full_path: str):  # noqa: ARG001
     if _SPA_INDEX.exists():
         return FileResponse(str(_SPA_INDEX))
-    return {"detail": "Frontend not built yet"}
+    raise HTTPException(404, "Not found")
