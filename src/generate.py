@@ -1,4 +1,3 @@
-import gc
 import json
 import os
 import subprocess
@@ -6,10 +5,10 @@ import sys
 import tempfile
 from datetime import datetime
 
-import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from pilmoji import Pilmoji
-from moviepy.editor import ImageClip, AudioFileClip
+
+# No numpy, no moviepy — ffmpeg handles all video encoding directly.
 
 CONFIG_PATH = "/assets/config.json"
 FADE_DURATION = 1.0
@@ -25,11 +24,15 @@ def load_config(path):
 
 
 def render_frame(image_path, text, text_position, font_size, font_color, width, height, bw=False, align_center=False, center_x=False):
+    """Return a PIL Image with the block's image + text overlay rendered."""
     img = Image.open(image_path).convert("RGB")
     scale = min(width / img.width, height / img.height)
     fitted = img.resize((int(img.width * scale), int(img.height * scale)), Image.LANCZOS)
-    img = Image.new("RGB", (width, height), (0, 0, 0))
-    img.paste(fitted, ((width - fitted.width) // 2, (height - fitted.height) // 2))
+    canvas = Image.new("RGB", (width, height), (0, 0, 0))
+    canvas.paste(fitted, ((width - fitted.width) // 2, (height - fitted.height) // 2))
+    img.close()
+    img = canvas
+
     if bw:
         img = img.convert("L").convert("RGB")
 
@@ -48,13 +51,10 @@ def render_frame(image_path, text, text_position, font_size, font_color, width, 
 
     lines = text.split("\n")
     line_bboxes = [draw.textbbox((0, 0), line or " ", font=font) for line in lines]
-    # visual width per line (b[2]-b[0] excludes left-bearing offset from draw pos)
     line_widths = [b[2] - b[0] for b in line_bboxes]
-    # left bearing: pixels from draw position to actual visual left edge of glyph
     left_bearings = [b[0] for b in line_bboxes]
     max_w = max(line_widths) if line_widths else 0
 
-    # vertical metrics (y-independent)
     y_bbox = draw.textbbox((0, y), text, font=font)
     top_y, bot_y = y_bbox[1], y_bbox[3]
     line_h = (bot_y - top_y) / len(lines)
@@ -67,22 +67,18 @@ def render_frame(image_path, text, text_position, font_size, font_color, width, 
 
     with Pilmoji(img) as pilmoji:
         for idx, (line, lw, lb) in enumerate(zip(lines, line_widths, left_bearings)):
-            # offset by -lb so visual left edge lands at x (symmetric padding)
             base_x = x - lb
             lx = base_x + (max_w - lw) // 2 if align_center else base_x
             ly = y + int(idx * line_h)
             pilmoji.text((lx, ly), line, fill=color, font=font)
 
-    result = np.array(img)
-    img.close()
-    return result
+    return img
 
 
 def build_clip_to_file(block, cfg, tmp_path):
-    """Render one block and write it to tmp_path as a video-only mp4.
+    """Render one block and encode it directly to tmp_path via ffmpeg.
 
-    The numpy frame and ImageClip are freed immediately after writing so only
-    one frame's worth of RAM is live at a time.
+    Only PIL + pilmoji are needed — no numpy, no moviepy.
     """
     image_path = os.path.join(IMAGES_DIR, block["image"])
     if not os.path.exists(image_path):
@@ -92,7 +88,7 @@ def build_clip_to_file(block, cfg, tmp_path):
     if duration <= 0:
         raise ValueError(f"Block has non-positive duration: {block}")
 
-    frame = render_frame(
+    img = render_frame(
         image_path=image_path,
         text=block.get("text", ""),
         text_position=block.get("text_position", [100, 900]),
@@ -105,17 +101,40 @@ def build_clip_to_file(block, cfg, tmp_path):
         center_x=block.get("center_x", False),
     )
 
-    clip = ImageClip(frame).set_duration(duration)
-    if block.get("fade_in", False):
-        clip = clip.fadein(FADE_DURATION)
-    if block.get("fade_out", False):
-        clip = clip.fadeout(FADE_DURATION)
+    png_fd, png_path = tempfile.mkstemp(suffix=".png", prefix="storygen_frame_")
+    try:
+        with os.fdopen(png_fd, "wb") as f:
+            img.save(f, format="PNG")
+        img.close()
+        del img
 
-    clip.write_videofile(tmp_path, fps=cfg["fps"], audio=False, logger=None)
+        # Build ffmpeg fade filter
+        vf_parts = []
+        if block.get("fade_in", False):
+            vf_parts.append(f"fade=type=in:start_time=0:duration={FADE_DURATION}")
+        if block.get("fade_out", False):
+            fade_start = max(0.0, duration - FADE_DURATION)
+            vf_parts.append(f"fade=type=out:start_time={fade_start}:duration={FADE_DURATION}")
 
-    clip.close()
-    del clip, frame
-    gc.collect()
+        cmd = [
+            "ffmpeg", "-y",
+            "-loop", "1", "-framerate", str(cfg["fps"]), "-i", png_path,
+            "-t", str(duration),
+            "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+            "-r", str(cfg["fps"]),
+        ]
+        if vf_parts:
+            cmd += ["-vf", ",".join(vf_parts)]
+        cmd.append(tmp_path)
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"ffmpeg segment failed:\n{result.stderr}")
+    finally:
+        try:
+            os.unlink(png_path)
+        except OSError:
+            pass
 
 
 def main():
