@@ -1,11 +1,15 @@
+import gc
 import json
 import os
+import subprocess
 import sys
+import tempfile
 from datetime import datetime
+
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from pilmoji import Pilmoji
-from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
+from moviepy.editor import ImageClip, AudioFileClip
 
 CONFIG_PATH = "/assets/config.json"
 FADE_DURATION = 1.0
@@ -69,10 +73,17 @@ def render_frame(image_path, text, text_position, font_size, font_color, width, 
             ly = y + int(idx * line_h)
             pilmoji.text((lx, ly), line, fill=color, font=font)
 
-    return np.array(img)
+    result = np.array(img)
+    img.close()
+    return result
 
 
-def build_clip(block, cfg):
+def build_clip_to_file(block, cfg, tmp_path):
+    """Render one block and write it to tmp_path as a video-only mp4.
+
+    The numpy frame and ImageClip are freed immediately after writing so only
+    one frame's worth of RAM is live at a time.
+    """
     image_path = os.path.join(IMAGES_DIR, block["image"])
     if not os.path.exists(image_path):
         raise FileNotFoundError(f"Image not found: {image_path}")
@@ -99,7 +110,12 @@ def build_clip(block, cfg):
         clip = clip.fadein(FADE_DURATION)
     if block.get("fade_out", False):
         clip = clip.fadeout(FADE_DURATION)
-    return clip
+
+    clip.write_videofile(tmp_path, fps=cfg["fps"], audio=False, logger=None)
+
+    clip.close()
+    del clip, frame
+    gc.collect()
 
 
 def main():
@@ -108,33 +124,78 @@ def main():
     config_path = sys.argv[2] if len(sys.argv) > 2 else CONFIG_PATH
     cfg = load_config(config_path)
 
-    clips = []
-    for block in cfg["blocks"]:
-        clip = build_clip(block, cfg)
-        clips.append(clip)
+    tmp_segments = []
+    concat_list_path = None
 
-    video = concatenate_videoclips(clips, method="compose")
+    try:
+        # --- Phase 1: encode each block to a separate temp segment ---
+        for i, block in enumerate(cfg["blocks"]):
+            tmp_fd, tmp_path = tempfile.mkstemp(
+                suffix=".mp4", prefix=f"storygen_seg{i}_"
+            )
+            os.close(tmp_fd)
+            build_clip_to_file(block, cfg, tmp_path)
+            tmp_segments.append(tmp_path)
 
-    music_file = cfg.get("music")
-    if music_file:
-        audio_path = os.path.join(ASSETS_DIR, music_file)
-        if not os.path.exists(audio_path):
-            raise FileNotFoundError(f"Music file not found: {audio_path}")
+        # --- Phase 2: build ffmpeg concat list ---
+        concat_fd, concat_list_path = tempfile.mkstemp(
+            suffix=".txt", prefix="storygen_concat_"
+        )
+        with os.fdopen(concat_fd, "w") as f:
+            for p in tmp_segments:
+                f.write(f"file '{p}'\n")
 
-        audio = AudioFileClip(audio_path)
-        total_duration = video.duration
-        if audio.duration < total_duration:
-            audio = audio.audio_loop(duration=total_duration)
-        audio = audio.subclip(0, total_duration)
-        video = video.set_audio(audio)
+        # --- Phase 3: determine output path ---
+        if len(sys.argv) > 1:
+            filename = sys.argv[1]
+        else:
+            timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+            filename = f"{cfg['output_prefix']}_{timestamp}.mp4"
+        output_path = os.path.join(OUTPUT_DIR, filename)
 
-    if len(sys.argv) > 1:
-        filename = sys.argv[1]
-    else:
-        timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-        filename = f"{cfg['output_prefix']}_{timestamp}.mp4"
-    output_path = os.path.join(OUTPUT_DIR, filename)
-    video.write_videofile(output_path, fps=cfg["fps"], audio_codec="aac")
+        # --- Phase 4: ffmpeg final assembly ---
+        music_file = cfg.get("music")
+        if music_file:
+            audio_path = os.path.join(ASSETS_DIR, music_file)
+            if not os.path.exists(audio_path):
+                raise FileNotFoundError(f"Music file not found: {audio_path}")
+            total_duration = sum(b["end"] - b["start"] for b in cfg["blocks"])
+            cmd = [
+                "ffmpeg", "-y",
+                "-f", "concat", "-safe", "0", "-i", concat_list_path,
+                "-stream_loop", "-1", "-i", audio_path,
+                "-map", "0:v:0", "-map", "1:a:0",
+                "-fflags", "+genpts",
+                "-c:v", "copy",
+                "-c:a", "aac", "-b:a", "192k",
+                "-t", str(total_duration),
+                output_path,
+            ]
+        else:
+            cmd = [
+                "ffmpeg", "-y",
+                "-f", "concat", "-safe", "0", "-i", concat_list_path,
+                "-fflags", "+genpts",
+                "-c:v", "copy",
+                output_path,
+            ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"ffmpeg concat failed:\n{result.stderr}")
+
+    finally:
+        for p in tmp_segments:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+        if concat_list_path:
+            try:
+                os.unlink(concat_list_path)
+            except OSError:
+                pass
+
     print(f"Done: {output_path}")
 
 
