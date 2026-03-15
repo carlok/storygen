@@ -55,7 +55,7 @@ services:
       dockerfile: Dockerfile.prod
     restart: always
     ports:
-      - "8000:8000"       # expose directly; put Caddy/nginx in front for HTTPS
+      - "127.0.0.1:8000:8000"   # bind to localhost only — nginx proxies from outside
     env_file: .env
     volumes:
       - output:/output    # generated MP4s persist across deploys
@@ -72,26 +72,8 @@ services:
       retries: 3
       start_period: 20s
 
-  # ── Caddy — automatic HTTPS reverse proxy (optional) ───────────────────────
-  # Uncomment this block to get Let's Encrypt HTTPS in front of the web service.
-  # Replace "storygen.example.com" with your real domain.
-  #
-  # caddy:
-  #   image: caddy:2-alpine
-  #   restart: always
-  #   ports:
-  #     - "80:80"
-  #     - "443:443"
-  #   volumes:
-  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
-  #     - caddy_data:/data
-  #     - caddy_config:/config
-  #   depends_on:
-  #     - web
 
 volumes:
   pgdata:
   output:
   storage:
-  # caddy_data:
-  # caddy_config:
