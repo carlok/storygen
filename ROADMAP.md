@@ -1,8 +1,30 @@
 # Roadmap — Public Multi-User Version
 
-This document describes the architectural plan to evolve storygen from a personal local tool into a hosted, multi-user web application with Google OAuth2 login and per-user configuration stored in a database.
+This document tracks the evolution of storygen from a personal local tool into a hosted, multi-user web application with Google OAuth2 login and per-user configuration stored in a database.
 
-> **Status:** design only — not yet implemented.
+> **Status:** core multi-user web app implemented. Google OAuth2, signed session cookies, PostgreSQL-backed users/configs/jobs, Alembic migrations, admin APIs, daily generation limits, and the React admin UI are now present in the codebase. The remaining roadmap items focus on user-managed media uploads, optional Gmail sending, cloud object storage, and production scaling.
+
+---
+
+## Current implementation snapshot
+
+| Area | Current state |
+|------|---------------|
+| Authentication | Google OAuth2 routes and signed `HttpOnly` session cookie support live in `web/auth.py` and `web/routers/auth.py` |
+| Persistence | SQLAlchemy async models for `User`, `Config`, and `Job`, with Alembic migrations under `alembic/versions/` |
+| User API | `/api/me`, `/api/blocks`, and `/api/generate` are scoped to the authenticated user |
+| Admin API | `/api/admin/*` routes support user listing, detail, status/admin updates, deletion, and aggregate stats |
+| Frontend | React/Vite pages for login, home editing, and admin management live under `frontend/src/pages/` |
+| Validation | Backend pytest tests and frontend Vitest tests cover auth helpers, user/admin APIs, generation flow, security headers, and UI components |
+
+## Remaining roadmap focus
+
+| Area | Still planned |
+|------|---------------|
+| Media uploads | Browser upload flows for per-user images and music |
+| Gmail send | Optional user-owned Gmail sending and refresh-token storage |
+| Object storage | S3/R2-backed assets and generated videos with presigned URLs |
+| Production scaling | Externalized storage and stateless app instances for horizontal scaling |
 
 ---
 
