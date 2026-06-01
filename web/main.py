@@ -180,7 +180,10 @@ def _smtp_send(
         msg.attach(part)
 
     with smtplib.SMTP(host, port) as srv:
-        srv.starttls()
+        srv.ehlo()
+        if srv.has_extn("starttls"):
+            srv.starttls()
+            srv.ehlo()
         if user and password:
             srv.login(user, password)
         srv.send_message(msg)

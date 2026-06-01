@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from web.main import _smtp_send
+
 
 _BASE_UPDATE = {
     "index": 0,
@@ -137,3 +139,92 @@ async def test_generate_creates_job_record(client, mock_db_session):
     assert len(job_adds) == 1
     assert job_adds[0][0][0].status == "pending"
     assert job_adds[0][0][0].filename.endswith(".mp4")
+
+
+def test_smtp_send_skips_starttls_when_server_does_not_advertise_it(monkeypatch):
+    """Local SMTP catchers such as Mailpit should work without STARTTLS support."""
+    calls = {"ehlo": 0, "sent": False}
+
+    class FakeSMTP:
+        def __init__(self, host, port):
+            assert host == "localhost"
+            assert port == 1025
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def ehlo(self):
+            calls["ehlo"] += 1
+
+        def has_extn(self, name):
+            assert name == "starttls"
+            return False
+
+        def starttls(self):
+            raise AssertionError("STARTTLS should not be used when unsupported")
+
+        def login(self, user, password):
+            raise AssertionError("login should not run without credentials")
+
+        def send_message(self, msg):
+            calls["sent"] = True
+            assert msg["To"] == "user@example.com"
+
+    monkeypatch.setenv("SMTP_HOST", "localhost")
+    monkeypatch.setenv("SMTP_PORT", "1025")
+    monkeypatch.setenv("SMTP_FROM", "noreply@example.com")
+    monkeypatch.delenv("SMTP_USER", raising=False)
+    monkeypatch.delenv("SMTP_PASSWORD", raising=False)
+    monkeypatch.setattr("web.main.smtplib.SMTP", FakeSMTP)
+
+    _smtp_send("user@example.com", "Subject", "Body")
+
+    assert calls == {"ehlo": 1, "sent": True}
+
+
+def test_smtp_send_uses_starttls_when_server_advertises_it(monkeypatch):
+    """SMTP providers that advertise STARTTLS should still get an encrypted session."""
+    calls = {"ehlo": 0, "starttls": 0, "login": 0, "sent": False}
+
+    class FakeSMTP:
+        def __init__(self, host, port):
+            assert host == "smtp.example.com"
+            assert port == 587
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def ehlo(self):
+            calls["ehlo"] += 1
+
+        def has_extn(self, name):
+            assert name == "starttls"
+            return True
+
+        def starttls(self):
+            calls["starttls"] += 1
+
+        def login(self, user, password):
+            calls["login"] += 1
+            assert (user, password) == ("smtp-user", "smtp-pass")
+
+        def send_message(self, msg):
+            calls["sent"] = True
+            assert msg["Subject"] == "Subject"
+
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_PORT", "587")
+    monkeypatch.setenv("SMTP_FROM", "noreply@example.com")
+    monkeypatch.setenv("SMTP_USER", "smtp-user")
+    monkeypatch.setenv("SMTP_PASSWORD", "smtp-pass")
+    monkeypatch.setattr("web.main.smtplib.SMTP", FakeSMTP)
+
+    _smtp_send("user@example.com", "Subject", "Body")
+
+    assert calls == {"ehlo": 2, "starttls": 1, "login": 1, "sent": True}
