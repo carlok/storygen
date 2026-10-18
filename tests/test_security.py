@@ -1,5 +1,7 @@
 """Tests for security headers and endpoint hardening."""
 
+from tests.csp_helpers import csp_allows_url, csp_directive_sources
+
 
 async def test_csp_header_present(client):
     resp = await client.get("/health")
@@ -13,13 +15,16 @@ async def test_csp_allows_self_scripts(client):
 
 async def test_csp_allows_google_fonts(client):
     csp = (await client.get("/health")).headers["content-security-policy"]
-    assert "https://fonts.googleapis.com" in csp
-    assert "https://fonts.gstatic.com" in csp
+    style_src = csp_directive_sources(csp, "style-src")
+    font_src = csp_directive_sources(csp, "font-src")
+    assert csp_allows_url(style_src, "https://fonts.googleapis.com")
+    assert csp_allows_url(font_src, "https://fonts.gstatic.com")
 
 
 async def test_csp_allows_google_avatars(client):
     csp = (await client.get("/health")).headers["content-security-policy"]
-    assert "https://lh3.googleusercontent.com" in csp
+    img_src = csp_directive_sources(csp, "img-src")
+    assert csp_allows_url(img_src, "https://lh3.googleusercontent.com")
 
 
 async def test_image_path_traversal_rejected(client):

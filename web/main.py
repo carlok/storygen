@@ -433,20 +433,25 @@ async def generate(
     return {"status": "queued"}
 
 
+_IMAGE_FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
 @app.get("/api/image/{filename}")
 def get_image(filename: str, _auth: User = Depends(_auth_dep)):
-    _images_root = Path("/assets/images").resolve()
-    # URL-decode first so that %2F-encoded slashes are also caught by resolve()
+    """Serve a block image by basename only (no path segments or traversal)."""
+    images_root = os.path.realpath("/assets/images")
     decoded = urllib.parse.unquote(filename)
-    try:
-        safe = (_images_root / decoded).resolve()
-    except Exception:
+    # Reject path separators, traversal, and any non-basename characters before
+    # joining paths so user input cannot escape the image directory.
+    if decoded != Path(decoded).name or not _IMAGE_FILENAME_RE.fullmatch(decoded):
         raise HTTPException(400, "Invalid filename")
-    if not safe.is_relative_to(_images_root):
+    candidate = os.path.realpath(os.path.join(images_root, decoded))
+    root_prefix = images_root + os.sep
+    if candidate.startswith(root_prefix) and os.path.isfile(candidate):
+        return FileResponse(path=candidate)
+    if not candidate.startswith(root_prefix):
         raise HTTPException(400, "Invalid filename")
-    if not safe.exists():
-        raise HTTPException(404, "Image not found")
-    return FileResponse(path=str(safe))
+    raise HTTPException(404, "Image not found")
 
 
 # ── Health check ──────────────────────────────────────────────────────────────
